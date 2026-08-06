@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Только Windows: targeting pack для Windows Desktop на Linux недоступен,
+    # и решение с WinForms там не соберётся даже ради тестов расчётного слоя.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          # Версия зафиксирована: «latest» однажды приедет и сломает сборку.
+          dotnet-version: '10.0.103'
+
+      - name: Восстановить зависимости
+        run: dotnet restore
+
+      - name: Собрать
+        run: dotnet build --no-restore -c Release
+
+      - name: Тесты
+        run: dotnet test --no-build -c Release --logger "trx;LogFileName=tests.trx" --results-directory artifacts/tests
+
+      - name: Отчёт о тестах
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/tests
+          if-no-files-found: ignore
