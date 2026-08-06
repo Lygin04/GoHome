@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Создание релиза токеном по умолчанию требует явного разрешения на запись,
+# иначе шаг падает с 403 уже после успешной сборки.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Только Windows: targeting pack для Windows Desktop на Linux недоступен.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          # Версия зафиксирована: «latest» однажды приедет и сломает сборку.
+          dotnet-version: '10.0.103'
+
+      - name: Версия из тега
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            throw "Тег '${{ github.ref_name }}' не похож на версию вида v1.2.0"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "artifact=WorkClock-$version-win-x64" >> $env:GITHUB_OUTPUT
+
+      - name: Восстановить зависимости
+        run: dotnet restore
+
+      - name: Собрать
+        run: dotnet build --no-restore -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      # Красные тесты не должны превращаться в опубликованный бинарник.
+      - name: Тесты
+        run: dotnet test --no-build -c Release
+
+      - name: Опубликовать
+        run: >
+          dotnet publish src/WorkClock/WorkClock.csproj
+          -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          -o publish
+
+      - name: Собрать архив и контрольные суммы
+        shell: pwsh
+        run: |
+          $name = '${{ steps.version.outputs.artifact }}'
+          New-Item -ItemType Directory -Path release, stage | Out-Null
+
+          # Имя артефакта с версией и архитектурой: иначе через полгода
+          # в списке релизов не отличить один WorkClock.exe от другого.
+          Copy-Item publish/WorkClock.exe "release/$name.exe"
+
+          Copy-Item publish/WorkClock.exe stage/WorkClock.exe
+          Copy-Item scripts/install.cmd, scripts/uninstall.cmd, README.md stage/
+          Compress-Archive -Path stage/* -DestinationPath "release/$name.zip"
+
+          # Бинарник неподписанный: контрольная сумма — единственный способ
+          # проверить, что скачано именно то, что собралось.
+          Get-FileHash release/*.exe, release/*.zip -Algorithm SHA256 |
+            ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content release/SHA256SUMS.txt -Encoding ascii
+
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Создать релиз
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @'
+          Self-contained сборка для win-x64: .NET на целевой машине не нужен.
+
+          - `ARTIFACT.zip` — приложение и скрипты установки: распаковать и запустить `install.cmd`;
+          - `ARTIFACT.exe` — только бинарник, для обновления поверх установленного;
+          - `SHA256SUMS.txt` — контрольные суммы.
+
+          Бинарник не подписан: SmartScreen покажет «Windows защитила ваш компьютер»,
+          а скачанный архив нужно разблокировать в свойствах файла. Подробности — в README.
+          '@
+          $notes = $notes -replace 'ARTIFACT', '${{ steps.version.outputs.artifact }}'
+          Set-Content notes.md -Value $notes -Encoding utf8
+
+          $files = (Get-ChildItem release).FullName
+          gh release create '${{ github.ref_name }}' $files `
+            --title "WorkClock ${{ steps.version.outputs.version }}" `
+            --notes-file notes.md
