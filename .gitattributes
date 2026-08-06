@@ -1,0 +1,23 @@
+# Нормализация переводов строк: в репозитории всегда LF, в рабочем дереве — как принято в ОС.
+* text=auto
+
+# Скрипты установки читает cmd.exe — ему нужен CRLF независимо от настроек клиента.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Файлы, которые Visual Studio / Rider переписывают в CRLF сами.
+*.sln text eol=crlf
+
+*.cs text diff=csharp
+*.csproj text
+*.json text
+*.md text
+*.yml text
+*.xml text
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.zip binary

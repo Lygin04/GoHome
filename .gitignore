@@ -1,0 +1,44 @@
+## Артефакты сборки .NET
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+[Oo]ut/
+artifacts/
+publish/
+*.user
+*.userosscache
+*.suo
+*.cache
+project.lock.json
+project.fragment.lock.json
+
+## Опубликованные бинарники и архивы релизов
+*.exe
+*.dll
+*.pdb
+*.zip
+*.7z
+*.nupkg
+SHA256SUMS.txt
+
+## Рабочие данные приложения — если каталог WorkClock вдруг окажется в дереве проекта
+days/
+WorkClock-data/
+*.workclock.json
+
+## IDE
+.vs/
+.vscode/
+.idea/
+_ReSharper*/
+*.DotSettings.user
+riderModule.iml
+
+## Прочее
+packages/
+.nuget/
+TestResults/
+*.trx
+Thumbs.db
+desktop.ini
