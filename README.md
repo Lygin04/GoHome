@@ -172,6 +172,10 @@ dotnet publish src/GoHome/GoHome.csproj -c Release -p:Version=1.2.0 -o publish
 Версия берётся из `-p:Version`; в релизах её подставляет workflow из тега вида `v1.2.0`.
 В `csproj` версии нет.
 
+Релизы собирает только CI: `git tag v1.2.0 && git push origin v1.2.0`. Workflow сам
+соберёт, проверит и приложит к релизу бинарник, архив и `SHA256SUMS.txt`. Создавать релиз
+на GitHub руками не нужно — тогда шаг публикации упадёт на конфликте имён.
+
 Раскладка репозитория:
 
 ```

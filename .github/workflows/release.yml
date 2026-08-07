@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # Ловим любой тег, а не только 'v*'. Релиз 0.1.0 не собрался именно потому,
+    # что тег назвали «0.1.0» без префикса: маска не совпала, и прогон не запустился
+    # вообще — без единой красной галочки, по которой это можно было бы заметить.
+    # Теперь тег неподходящего вида роняет шаг «Версия из тега», а это видно.
+    tags: ['*']
 
 # Создание релиза токеном по умолчанию требует явного разрешения на запись,
 # иначе шаг падает с 403 уже после успешной сборки.
@@ -27,9 +31,10 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $version = '${{ github.ref_name }}' -replace '^v', ''
+          $tag = '${{ github.ref_name }}'
+          $version = $tag -replace '^v', ''
           if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-            throw "Тег '${{ github.ref_name }}' не похож на версию вида v1.2.0"
+            throw "Тег '$tag' не похож на версию. Ожидается 'v1.2.0' — префикс 'v' необязателен, но цифры обязательны."
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "artifact=GoHome-$version-win-x64" >> $env:GITHUB_OUTPUT
@@ -44,12 +49,51 @@ jobs:
       - name: Тесты
         run: dotnet test --no-build -c Release
 
+      # Публикуется конкретный проект, а не решение: у решения выходной каталог
+      # другой, и в него заодно приезжает тестовый проект.
       - name: Опубликовать
         run: >
           dotnet publish src/GoHome/GoHome.csproj
           -c Release
           -p:Version=${{ steps.version.outputs.version }}
           -o publish
+
+      # Публикация, не давшая файла, не должна доезжать до релиза молча —
+      # ровно так в ассетах 0.1.0 и оказались одни исходники.
+      - name: Проверить результат публикации
+        shell: pwsh
+        run: |
+          $exe = 'publish/GoHome.exe'
+
+          if (-not (Test-Path $exe)) {
+              Write-Host 'Фактическое содержимое каталога публикации:'
+              if (Test-Path publish) {
+                  Get-ChildItem publish -Recurse -File | ForEach-Object { Write-Host "  $($_.FullName)" }
+              } else {
+                  Write-Host '  каталога publish нет вовсе'
+              }
+              throw "Публикация не дала $exe — выпускать в релиз нечего."
+          }
+
+          # Self-contained сборка со сжатием весит около 47 МБ, framework-dependent —
+          # примерно 150 КБ. Порог в 30 МБ различает их с большим запасом. Файл-«малютка»
+          # означает потерянный SelfContained: на машине без рантайма он не запустится,
+          # и узнать об этом пользователь должен не после скачивания.
+          $size = (Get-Item $exe).Length
+          $mb = [math]::Round($size / 1MB, 1)
+          if ($size -lt 30MB) {
+              throw "$exe весит $mb МБ — это не self-contained сборка. Проверь SelfContained и RuntimeIdentifier в csproj."
+          }
+
+          # Версия должна приехать из тега, а не остаться дефолтной 1.0.0.
+          # У single-file сборки ProductVersion выглядит как «0.1.0+<sha>» — хвост отрезаем.
+          $expected = '${{ steps.version.outputs.version }}'
+          $actual = ((Get-Item $exe).VersionInfo.ProductVersion -split '\+')[0]
+          if ($actual -ne $expected) {
+              throw "Версия внутри бинарника '$actual' не совпадает с тегом '$expected' — -p:Version не доехал до публикации."
+          }
+
+          Write-Host "OK: $exe, $mb МБ, версия $actual"
 
       - name: Собрать архив и контрольные суммы
         shell: pwsh
@@ -71,14 +115,43 @@ jobs:
             ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Set-Content release/SHA256SUMS.txt -Encoding ascii
 
+          # Список ассетов задан явно: аплоад по маске, ничего не нашедшей,
+          # завершается успешно и молча — так релиз и остаётся пустым.
+          $missing = @("$name.exe", "$name.zip", 'SHA256SUMS.txt') |
+            Where-Object { -not (Test-Path "release/$_") }
+          if ($missing) {
+              throw "В release/ не хватает файлов: $($missing -join ', ')"
+          }
+
+          Get-ChildItem release | ForEach-Object { '{0,-40} {1,8:N1} МБ' -f $_.Name, ($_.Length / 1MB) }
           Get-Content release/SHA256SUMS.txt
+
+      # Дубликат в артефактах прогона: если создание релиза упадёт, собранный
+      # бинарник останется доступен и пересобирать его не придётся.
+      - name: Приложить к прогону
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: release/
+          if-no-files-found: error
 
       - name: Создать релиз
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @'
+          $tag = '${{ github.ref_name }}'
+
+          # Заметки генерирует сам GitHub — тот же механизм, что и кнопка
+          # «Generate release notes»: коммиты и авторы с прошлого тега.
+          # Подставлять сюда текст последнего коммита руками не нужно.
+          $generated = gh api "repos/${{ github.repository }}/releases/generate-notes" `
+            -f tag_name=$tag --jq .body
+          if ($LASTEXITCODE -ne 0 -or -not $generated) {
+              throw "Не удалось получить сгенерированные заметки для тега $tag."
+          }
+
+          $howto = @'
           Self-contained сборка для win-x64: .NET на целевой машине не нужен.
 
           - `ARTIFACT.zip` — приложение и скрипты установки: распаковать и запустить `install.cmd`;
@@ -87,11 +160,16 @@ jobs:
 
           Бинарник не подписан: SmartScreen покажет «Windows защитила ваш компьютер»,
           а скачанный архив нужно разблокировать в свойствах файла. Подробности — в README.
+
           '@
-          $notes = $notes -replace 'ARTIFACT', '${{ steps.version.outputs.artifact }}'
+          $notes = ($howto -replace 'ARTIFACT', '${{ steps.version.outputs.artifact }}') + $generated
           Set-Content notes.md -Value $notes -Encoding utf8
 
+          # Если релиз на этот тег уже есть, шаг упадёт — и это правильно:
+          # значит, релиз создали руками, и дописывать ассеты в него вслепую нельзя.
+          # Удалите такой релиз и перевыпустите тег.
           $files = (Get-ChildItem release).FullName
-          gh release create '${{ github.ref_name }}' $files `
+          gh release create $tag $files `
             --title "GoHome ${{ steps.version.outputs.version }}" `
-            --notes-file notes.md
+            --notes-file notes.md `
+            --verify-tag
