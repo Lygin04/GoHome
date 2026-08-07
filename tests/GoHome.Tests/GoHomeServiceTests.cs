@@ -51,6 +51,19 @@ public sealed class GoHomeServiceTests : IDisposable
     }
 
     [Fact]
+    public void Старт_при_заблокированном_экране_день_не_открывает()
+    {
+        // Приложение поднялось до прихода человека — например, после ночного ребута.
+        // При заблокированном экране возврат не пишется вовсе (ARSO логинится в сессию
+        // сам), поэтому на старте выполняется только закрытие прошлых дней. Возврат
+        // в пустой день стал бы приходом, так что важно, что его здесь нет.
+        _service.CloseStaleDays(At(6));
+
+        Assert.Equal(WorkState.NotStarted, _service.Summarize(At(6)).State);
+        Assert.False(File.Exists(_store.PathFor(Today)));
+    }
+
+    [Fact]
     public void Пауза_без_простоя_ставится_текущим_временем()
     {
         _service.RecordReturn(At(9), "unlock");
