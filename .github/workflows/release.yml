@@ -180,14 +180,57 @@ jobs:
           а скачанный архив нужно разблокировать в свойствах файла. Подробности — в README.
 
           '@
+          # Трейлеры соавторства — часть истории коммитов, а не заметок релиза.
+          $generated = ($generated -split "`n" |
+            Where-Object { $_ -notmatch '(?i)^\s*co-authored-by\s*:' }) -join "`n"
+
           $notes = ($howto -replace 'ARTIFACT', '${{ steps.version.outputs.artifact }}') + $generated
           Set-Content notes.md -Value $notes -Encoding utf8
 
-          # Если релиз на этот тег уже есть, шаг упадёт — и это правильно:
-          # значит, релиз создали руками, и дописывать ассеты в него вслепую нельзя.
-          # Удалите такой релиз и перевыпустите тег.
+          $name = '${{ steps.version.outputs.artifact }}'
+          $expected = @("$name.exe", "$name.zip", 'SHA256SUMS.txt')
           $files = (Get-ChildItem release).FullName
-          gh release create $tag $files `
+
+          # Повторный выпуск того же тега — штатный случай: прошлый прогон мог упасть
+          # на полпути, а релиз мог оказаться созданным руками и пустым. Падать на
+          # конфликте имени нельзя — так поломка и застывает в виде релиза без бинарника.
+          gh release view $tag --json tagName *> $null
+          $existed = $LASTEXITCODE -eq 0
+
+          if (-not $existed) {
+              # Черновиком: публикуем только после того, как ассеты приложены и проверены,
+              # иначе упавший прогон оставит на виду релиз без приложения.
+              gh release create $tag --draft --verify-tag `
+                --title "GoHome ${{ steps.version.outputs.version }}" `
+                --notes-file notes.md
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Не удалось создать черновик релиза $tag."
+              }
+          }
+
+          gh release upload $tag $files --clobber
+          if ($LASTEXITCODE -ne 0) {
+              if (-not $existed) { gh release delete $tag --yes *> $null }
+              throw "Не удалось приложить файлы к релизу $tag."
+          }
+
+          # Заметки перезаписываем всегда: у релиза, созданного руками, тело либо пустое,
+          # либо содержит текст коммита. Заодно снимаем черновик.
+          gh release edit $tag --draft=false `
             --title "GoHome ${{ steps.version.outputs.version }}" `
-            --notes-file notes.md `
-            --verify-tag
+            --notes-file notes.md
+          if ($LASTEXITCODE -ne 0) {
+              if (-not $existed) { gh release delete $tag --yes *> $null }
+              throw "Не удалось опубликовать релиз $tag."
+          }
+
+          # Спрашиваем сам GitHub, что в итоге приложено. Аплоад, ничего не загрузивший,
+          # завершается успешно и молча — а это ровно то, чем оба прошлых релиза и были.
+          $attached = @(gh release view $tag --json assets --jq '.assets[].name')
+          $lost = $expected | Where-Object { $_ -notin $attached }
+          if ($lost) {
+              if (-not $existed) { gh release delete $tag --yes *> $null }
+              throw "К релизу $tag не приложены: $($lost -join ', '). Приложено: $($attached -join ', ')"
+          }
+
+          Write-Host "Релиз $tag опубликован, приложено: $($attached -join ', ')"
