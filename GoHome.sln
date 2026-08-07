@@ -5,11 +5,11 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkClock", "src\WorkClock\WorkClock.csproj", "{47C0CF2A-0963-42E8-8A9E-8B11B973EAE0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GoHome", "src\GoHome\GoHome.csproj", "{47C0CF2A-0963-42E8-8A9E-8B11B973EAE0}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkClock.Tests", "tests\WorkClock.Tests\WorkClock.Tests.csproj", "{23D0D123-6CD9-4DC0-A4C4-099CA60A1858}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GoHome.Tests", "tests\GoHome.Tests\GoHome.Tests.csproj", "{23D0D123-6CD9-4DC0-A4C4-099CA60A1858}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

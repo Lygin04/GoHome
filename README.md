@@ -1,4 +1,4 @@
-# WorkClock
+# GoHome
 
 Трей-утилита для Windows: считает, сколько сегодня отработано. Счётчик сам встаёт на паузу,
 когда вы блокируете экран по `Win+L`, и сам возобновляется после разблокировки. На восьми часах
@@ -13,11 +13,11 @@
 
 ## Установка
 
-1. Скачайте `WorkClock-<версия>-win-x64.zip` из [релизов](../../releases).
+1. Скачайте `GoHome-<версия>-win-x64.zip` из [релизов](../../releases).
 2. **Разблокируйте архив до распаковки** — см. ниже.
 3. Распакуйте куда угодно и запустите `install.cmd`.
 
-Скрипт скопирует программу в `%LOCALAPPDATA%\Programs\WorkClock`, зарегистрирует автозапуск
+Скрипт скопирует программу в `%LOCALAPPDATA%\Programs\GoHome`, зарегистрирует автозапуск
 при входе в систему и сразу её запустит. Права администратора не нужны.
 
 ### Два места, где обычно застревают
@@ -30,13 +30,13 @@
 (mark of the web), и распакованные из такого архива файлы могут молча не запускаться. Поэтому
 до распаковки: правой кнопкой по `.zip` → **Свойства** → внизу вкладки «Общие» галочка
 **«Разблокировать»** → ОК. Если архив уже распакован, снимите метку тем же способом
-с `WorkClock.exe` и с `install.cmd`.
+с `GoHome.exe` и с `install.cmd`.
 
 Контрольные суммы файлов релиза лежат рядом в `SHA256SUMS.txt` — единственный способ убедиться,
 что скачалось именно то, что собралось:
 
 ```powershell
-Get-FileHash .\WorkClock-0.1.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\GoHome-0.1.0-win-x64.zip -Algorithm SHA256
 ```
 
 ---
@@ -102,7 +102,7 @@ Get-FileHash .\WorkClock-0.1.0-win-x64.zip -Algorithm SHA256
 ## Где лежат данные и как их править
 
 ```
-%APPDATA%\WorkClock\days\2026-08-06.json
+%APPDATA%\GoHome\days\2026-08-06.json
 ```
 
 Один файл на рабочий день, имя — рабочая дата (с учётом сдвига на 04:00). Формат человеческий,
@@ -142,16 +142,16 @@ Get-FileHash .\WorkClock-0.1.0-win-x64.zip -Algorithm SHA256
 ## Удаление
 
 Запустите `uninstall.cmd` из того же архива. Он снимет задачу планировщика, остановит приложение
-и удалит `%LOCALAPPDATA%\Programs\WorkClock`.
+и удалит `%LOCALAPPDATA%\Programs\GoHome`.
 
 Вручную то же самое:
 
 ```powershell
-schtasks /Delete /TN WorkClock /F
-Remove-Item "$env:LOCALAPPDATA\Programs\WorkClock" -Recurse -Force
+schtasks /Delete /TN GoHome /F
+Remove-Item "$env:LOCALAPPDATA\Programs\GoHome" -Recurse -Force
 ```
 
-**Данные при удалении не трогаются.** Вся статистика остаётся в `%APPDATA%\WorkClock` —
+**Данные при удалении не трогаются.** Вся статистика остаётся в `%APPDATA%\GoHome` —
 чтобы её не потерять при переустановке. Если она больше не нужна, удалите эту папку отдельно.
 
 ---
@@ -162,10 +162,10 @@ Remove-Item "$env:LOCALAPPDATA\Programs\WorkClock" -Recurse -Force
 
 ```powershell
 dotnet test
-dotnet publish src/WorkClock/WorkClock.csproj -c Release -p:Version=1.2.0 -o publish
+dotnet publish src/GoHome/GoHome.csproj -c Release -p:Version=1.2.0 -o publish
 ```
 
-На выходе — один self-contained `publish\WorkClock.exe` на ~50 МБ: рантайм внутри, на машине
+На выходе — один self-contained `publish\GoHome.exe` на ~50 МБ: рантайм внутри, на машине
 без установленного .NET он просто запускается. Тримминг намеренно выключен — WinForms его
 не поддерживает и падает на рефлексии.
 
@@ -175,10 +175,10 @@ dotnet publish src/WorkClock/WorkClock.csproj -c Release -p:Version=1.2.0 -o pub
 Раскладка репозитория:
 
 ```
-src/WorkClock/Core      расчётный слой — чистые функции, ни одного обращения к системным часам
-src/WorkClock/Storage   файлы дней, атомарная запись
-src/WorkClock/Interop   P/Invoke: простой пользователя, состояние блокировки, тема
-src/WorkClock/Ui        кольцо, трей, окно истории
-src/WorkClock/App       когда какую отметку писать, автозапуск
-tests/WorkClock.Tests   тесты; расчётный слой проверяется без Windows-специфики и без задержек
+src/GoHome/Core      расчётный слой — чистые функции, ни одного обращения к системным часам
+src/GoHome/Storage   файлы дней, атомарная запись
+src/GoHome/Interop   P/Invoke: простой пользователя, состояние блокировки, тема
+src/GoHome/Ui        кольцо, трей, окно истории
+src/GoHome/App       когда какую отметку писать, автозапуск
+tests/GoHome.Tests   тесты; расчётный слой проверяется без Windows-специфики и без задержек
 ```

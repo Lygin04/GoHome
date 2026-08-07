@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWindowsForms>true</UseWindowsForms>
+        <!-- Одно имя на всё: каталог репозитория, решение, проект, сборка, namespace и exe.
+             Расхождение здесь ломает не сборку, а поиск: IDE ищет решение по имени папки,
+             скрипты установки — exe по имени сборки. -->
+        <RootNamespace>GoHome</RootNamespace>
+        <AssemblyName>GoHome</AssemblyName>
+        <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+        <ApplicationDefaultFont>Segoe UI, 9pt</ApplicationDefaultFont>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <!-- Ставится на корпоративную машину без прав на установку рантайма. -->
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+        <SelfContained>true</SelfContained>
+        <PublishSingleFile>true</PublishSingleFile>
+        <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+        <!-- WinForms не поддерживает тримминг: предупреждения сборки и падения на рефлексии. -->
+        <PublishTrimmed>false</PublishTrimmed>
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <DebugType>embedded</DebugType>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Product>GoHome</Product>
+        <AssemblyTitle>GoHome</AssemblyTitle>
+        <Description>Учёт отработанного времени с автоматической паузой по блокировке экрана</Description>
+        <!-- Версия не хардкодится: её задаёт релизный workflow из тега (-p:Version=1.2.0). -->
+    </PropertyGroup>
+
+</Project>

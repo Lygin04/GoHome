@@ -22,10 +22,11 @@ project.fragment.lock.json
 *.nupkg
 SHA256SUMS.txt
 
-## Рабочие данные приложения — если каталог WorkClock вдруг окажется в дереве проекта
+## Рабочие данные приложения. Штатно они лежат в %APPDATA%\GoHome, но при отладке
+## каталог данных легко задать внутри репозитория — такое в историю попадать не должно.
 days/
-WorkClock-data/
-*.workclock.json
+GoHome-data/
+*.gohome.json
 
 ## IDE
 .vs/
