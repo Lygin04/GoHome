@@ -97,11 +97,17 @@ $partial = "$exe.new"
 Write-Host "Скачиваю $($binary.name) ..."
 try {
     Invoke-WebRequest -Uri $binary.browser_download_url -OutFile $partial -UseBasicParsing -TimeoutSec 1200
-    $expected = (Invoke-WebRequest -Uri $sums.browser_download_url -UseBasicParsing -TimeoutSec 60).Content
+    $raw = (Invoke-WebRequest -Uri $sums.browser_download_url -UseBasicParsing -TimeoutSec 60).Content
 } catch {
     Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
     Fail "Загрузка не удалась: $($_.Exception.Message)"
 }
+
+# GitHub отдаёт файл сумм как application/octet-stream, и PowerShell 5.1 кладёт
+# в .Content массив байт, а не строку. Разбор такого «текста» по строкам молча даёт
+# мусор, ни одна строка не совпадает с именем файла — и целая загрузка отвергается
+# как битая. Декодируем явно.
+$expected = if ($raw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($raw) } else { [string] $raw }
 
 Write-Host 'Сверяю контрольную сумму...'
 $actual = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash
