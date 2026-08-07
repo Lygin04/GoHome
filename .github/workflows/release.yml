@@ -106,8 +106,17 @@ jobs:
           Copy-Item publish/GoHome.exe "release/$name.exe"
 
           Copy-Item publish/GoHome.exe stage/GoHome.exe
-          Copy-Item scripts/install.cmd, scripts/uninstall.cmd, README.md stage/
+          Copy-Item scripts/*.cmd, scripts/*.ps1, README.md stage/
           Compress-Archive -Path stage/* -DestinationPath "release/$name.zip"
+
+          # update.ps1 — единственный способ обновиться: приложение в сеть не ходит.
+          # install.cmd кладёт его рядом с программой, поэтому без него установка
+          # оставит пользователя без средства обновления.
+          $scripts = @('install.cmd', 'uninstall.cmd', 'update.cmd', 'update.ps1')
+          $lost = $scripts | Where-Object { -not (Test-Path "stage/$_") }
+          if ($lost) {
+              throw "В архив не попали скрипты: $($lost -join ', ')"
+          }
 
           # Бинарник неподписанный: контрольная сумма — единственный способ
           # проверить, что скачано именно то, что собралось.
@@ -117,6 +126,11 @@ jobs:
 
           # Список ассетов задан явно: аплоад по маске, ничего не нашедшей,
           # завершается успешно и молча — так релиз и остаётся пустым.
+          #
+          # Эти имена — ещё и публичный контракт. update.ps1 уже лежит на дисках
+          # пользователей от прошлых версий, себя не обновляет и ищет ассеты именно так:
+          # GoHome-<версия>-win-x64.exe и SHA256SUMS.txt. Переименование здесь молча
+          # сломает обновление у всех, кто ещё не обновился.
           $missing = @("$name.exe", "$name.zip", 'SHA256SUMS.txt') |
             Where-Object { -not (Test-Path "release/$_") }
           if ($missing) {
@@ -154,9 +168,13 @@ jobs:
           $howto = @'
           Self-contained сборка для win-x64: .NET на целевой машине не нужен.
 
-          - `ARTIFACT.zip` — приложение и скрипты установки: распаковать и запустить `install.cmd`;
-          - `ARTIFACT.exe` — только бинарник, для обновления поверх установленного;
+          - `ARTIFACT.zip` — приложение и скрипты: распаковать и запустить `install.cmd`;
+          - `ARTIFACT.exe` — только бинарник;
           - `SHA256SUMS.txt` — контрольные суммы.
+
+          **Уже установлено?** Запустите `update.cmd` — он лежит рядом с программой
+          в `%LOCALAPPDATA%\Programs\GoHome`. Само приложение в сеть не ходит и об
+          обновлениях не знает: обновление запускает пользователь.
 
           Бинарник не подписан: SmartScreen покажет «Windows защитила ваш компьютер»,
           а скачанный архив нужно разблокировать в свойствах файла. Подробности — в README.
