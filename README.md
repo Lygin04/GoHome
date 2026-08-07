@@ -158,7 +158,7 @@ Remove-Item "$env:LOCALAPPDATA\Programs\GoHome" -Recurse -Force
 
 ## Сборка из исходников
 
-Нужен .NET SDK 10.
+Нужен .NET SDK 10. Версия зафиксирована в `global.json` — той же, что стоит в CI.
 
 ```powershell
 dotnet test
@@ -182,3 +182,7 @@ src/GoHome/Ui        кольцо, трей, окно истории
 src/GoHome/App       когда какую отметку писать, автозапуск
 tests/GoHome.Tests   тесты; расчётный слой проверяется без Windows-специфики и без задержек
 ```
+
+Собирать удобнее всего из `GoHome.sln` в корне. Если из терминала сборка идёт, а Rider падает
+с `MSB4236` — это настройка IDE, а не проект; что где переключить, написано
+в [docs/rider-setup.md](docs/rider-setup.md).
