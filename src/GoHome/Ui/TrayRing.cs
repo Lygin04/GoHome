@@ -29,6 +29,13 @@ public sealed class TrayRing : IDisposable
     /// <summary>Сторона иконки трея из системной метрики: на 125% DPI система ждёт 20 пикселей, а не 16.</summary>
     public static int IconSize => Math.Clamp(SystemInformation.SmallIconSize.Width, 16, 64);
 
+    /// <summary>Оформление, под которое сейчас красится кольцо.</summary>
+    public static RingPalette CurrentPalette => SystemTheme.IsHighContrast()
+        ? RingPalette.HighContrast
+        : SystemTheme.IsDarkTaskbar()
+            ? RingPalette.Dark
+            : RingPalette.Light;
+
     /// <summary>Перерисовать на следующем обновлении: сменилась тема или параметры экрана.</summary>
     public void Invalidate() => _shown = null;
 
@@ -37,7 +44,7 @@ public sealed class TrayRing : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        var visual = RingVisual.From(IconSize, progress, mood, SystemTheme.IsDarkTaskbar());
+        var visual = RingVisual.From(IconSize, progress, mood, CurrentPalette);
         if (_shown == visual)
         {
             return false;

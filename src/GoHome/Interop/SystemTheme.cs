@@ -3,12 +3,16 @@ using Microsoft.Win32;
 namespace GoHome.Interop;
 
 /// <summary>
-/// Тема панели задач. Полупрозрачный белый трек кольца невидим на светлой панели,
-/// поэтому подложку приходится подбирать под тему.
+/// Оформление Windows: от него зависят цвета кольца в трее.
 /// </summary>
 public static class SystemTheme
 {
     private const string PersonalizeKey = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+
+    /// <summary>
+    /// Тема панели задач и системных элементов. Оформление окон приложений задаёт
+    /// соседний <c>AppsUseLightTheme</c> — кольцо живёт на панели, и брать нужно этот.
+    /// </summary>
     private const string SystemThemeValue = "SystemUsesLightTheme";
 
     /// <summary>Панель задач тёмная. По умолчанию — да: так выглядит Windows из коробки.</summary>
@@ -26,4 +30,10 @@ public static class SystemTheme
             return true;
         }
     }
+
+    /// <summary>
+    /// Включён режим высокой контрастности. Читается каждый раз заново:
+    /// режим переключается горячими клавишами в любой момент.
+    /// </summary>
+    public static bool IsHighContrast() => SystemInformation.HighContrast;
 }

@@ -283,7 +283,12 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
     {
-        if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color or UserPreferenceCategory.VisualStyle)
+        // Переключение светлой и тёмной темы приходит как General (WM_SETTINGCHANGE
+        // с «ImmersiveColorSet»), высокая контрастность — как Accessibility.
+        if (e.Category is UserPreferenceCategory.General
+            or UserPreferenceCategory.Color
+            or UserPreferenceCategory.VisualStyle
+            or UserPreferenceCategory.Accessibility)
         {
             PostRedraw();
         }
