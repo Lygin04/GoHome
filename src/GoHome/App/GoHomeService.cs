@@ -24,22 +24,28 @@ public sealed class GoHomeService
 
     private readonly DayLogStore _store;
 
-    public GoHomeService(DayLogStore store, TimeSpan? goal = null)
+    public GoHomeService(DayLogStore store, TimeSpan? goal = null, LunchRules? lunch = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         _store = store;
         Goal = goal ?? WorkTimeCalculator.DefaultGoal;
+        Lunch = lunch ?? LunchRules.Default;
     }
 
     /// <summary>Норма рабочего дня.</summary>
     public TimeSpan Goal { get; }
 
+    /// <summary>Когда отлучка может оказаться обедом.</summary>
+    public LunchRules Lunch { get; }
+
     /// <summary>Каталог с журналами.</summary>
     public string DataRoot => _store.Root;
 
     /// <summary>Расчёт текущего дня.</summary>
-    public DaySummary Summarize(DateTimeOffset now) =>
-        WorkTimeCalculator.Compute(_store.Load(WorkDay.DateOf(now)), now, Goal);
+    public DaySummary Summarize(DateTimeOffset now) => Compute(_store.Load(WorkDay.DateOf(now)), now);
+
+    private DaySummary Compute(DayLog log, DateTimeOffset now) =>
+        WorkTimeCalculator.Compute(log, now, Goal, Lunch);
 
     /// <summary>Путь к файлу дня, которому принадлежит момент.</summary>
     public string DayFilePath(DateTimeOffset now) => _store.PathFor(WorkDay.DateOf(now));
@@ -52,7 +58,50 @@ public sealed class GoHomeService
     {
         var today = WorkDay.DateOf(now);
         var logs = _store.LoadRange(today.AddDays(-(days - 1)), today);
-        return HistoryCalculator.Recent(logs, now, days, Goal);
+        return HistoryCalculator.Recent(logs, now, days, Goal, Lunch);
+    }
+
+    /// <summary>
+    /// Переклассифицирует отлучку: пометить обедом или вернуть в зачёт. Поправка ложится
+    /// отдельным списком, отметки журнала не трогаются.
+    /// </summary>
+    /// <returns><c>true</c>, если поправка записана.</returns>
+    public bool Reclassify(DateOnly date, DateTimeOffset breakAt, BreakKind kind, string source) =>
+        _store.TryUpdate(date, log =>
+        {
+            if (log.Punches.Count == 0)
+            {
+                // В дне без отметок поправлять нечего, а файл заводить незачем.
+                return false;
+            }
+
+            log.Adjustments ??= [];
+            log.Adjustments.RemoveAll(a => a is null || a.BreakAt.UtcTicks == breakAt.UtcTicks);
+            log.Adjustments.Add(new BreakAdjustment(breakAt.ToWholeSecond(), kind, source));
+            return true;
+        });
+
+    /// <summary>
+    /// Снимает пометку с отлучки, которую обедом сочла догадка, и возвращает догадку
+    /// в исходное состояние: следующая подходящая отлучка снова становится кандидатом.
+    /// </summary>
+    /// <returns><c>true</c>, если было что отменять.</returns>
+    public bool CancelGuessedLunch(DateTimeOffset now)
+    {
+        var date = WorkDay.DateOf(now);
+        return _store.TryUpdate(date, log =>
+        {
+            if (Compute(log, now).GuessedLunch is not { } guessed)
+            {
+                return false;
+            }
+
+            log.Adjustments ??= [];
+            log.Adjustments.RemoveAll(a => a is null || a.BreakAt.UtcTicks == guessed.Start.UtcTicks);
+            log.Adjustments.Add(new BreakAdjustment(guessed.Start, BreakKind.Paid, "cancelled"));
+            log.LunchNotifiedAt = null;
+            return true;
+        });
     }
 
     /// <summary>
@@ -62,13 +111,13 @@ public sealed class GoHomeService
     public bool RecordReturn(DateTimeOffset now, string source) =>
         _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
-            if (WorkTimeCalculator.Compute(log, now, Goal).State == WorkState.Working)
+            if (Compute(log, now).State == WorkState.Working)
             {
                 // Время уже идёт — дубль только замусорит журнал.
                 return false;
             }
 
-            log.Punches.Add(new Punch(NotBeforeLastPunch(log, now).ToWholeSecond(), PunchKind.BreakEnd, source));
+            Append(log, new Punch(NotBeforeLastPunch(log, now).ToWholeSecond(), PunchKind.BreakEnd, source));
             return true;
         });
 
@@ -80,8 +129,7 @@ public sealed class GoHomeService
     public bool RecordPause(DateTimeOffset now, TimeSpan idle, string source) =>
         _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
-            var summary = WorkTimeCalculator.Compute(log, now, Goal);
-            if (summary.State != WorkState.Working)
+            if (Compute(log, now).State != WorkState.Working)
             {
                 return false;
             }
@@ -92,7 +140,7 @@ public sealed class GoHomeService
                 at = now;
             }
 
-            log.Punches.Add(new Punch(NotBeforeLastPunch(log, at).ToWholeSecond(), PunchKind.BreakStart, source));
+            Append(log, new Punch(NotBeforeLastPunch(log, at).ToWholeSecond(), PunchKind.BreakStart, source));
             return true;
         });
 
@@ -144,13 +192,12 @@ public sealed class GoHomeService
                     return false;
                 }
 
-                var summary = WorkTimeCalculator.Compute(log, now, Goal);
-                if (summary.LeftAt is not { } leftAt)
+                if (Compute(log, now).LeftAt is not { } leftAt)
                 {
                     return false;
                 }
 
-                log.Punches.Add(new Punch(leftAt.ToWholeSecond(), PunchKind.Out, "recovered"));
+                Append(log, new Punch(leftAt.ToWholeSecond(), PunchKind.Out, "recovered"));
                 return true;
             });
 
@@ -181,18 +228,18 @@ public sealed class GoHomeService
 
         if (humanPresent && previousDate < today)
         {
-            var atBoundary = WorkTimeCalculator.Compute(_store.Load(previousDate), boundary.AddTicks(-1), Goal);
+            var atBoundary = Compute(_store.Load(previousDate), boundary.AddTicks(-1));
             if (atBoundary.State == WorkState.Working)
             {
                 _store.TryUpdate(previousDate, log =>
                 {
-                    log.Punches.Add(new Punch(boundary, PunchKind.Out, "day-rollover"));
+                    Append(log, new Punch(boundary, PunchKind.Out, "day-rollover"));
                     return true;
                 });
 
                 _store.TryUpdate(today, log =>
                 {
-                    log.Punches.Add(new Punch(boundary, PunchKind.In, "day-rollover"));
+                    Append(log, new Punch(boundary, PunchKind.In, "day-rollover"));
                     return true;
                 });
             }
@@ -205,23 +252,96 @@ public sealed class GoHomeService
     /// Забирает право показать уведомление о норме. Флаг живёт в файле дня,
     /// поэтому уведомление приходит ровно один раз за день даже после перезапуска.
     /// </summary>
-    public bool TryTakeGoalNotification(DateTimeOffset now) =>
+    /// <remarks>
+    /// Флаг не односторонний: пометка отлучки обедом уменьшает отработанное, и счётчик
+    /// может уйти ниже нормы уже после уведомления. Тогда флаг снимается, и при повторном
+    /// достижении нормы уведомление приходит заново.
+    /// </remarks>
+    public bool TryTakeGoalNotification(DateTimeOffset now)
+    {
+        var notify = false;
+
         _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
+            var summary = Compute(log, now);
+            if (summary.State == WorkState.NotStarted)
+            {
+                return false;
+            }
+
+            if (!summary.GoalReached)
+            {
+                if (!log.GoalNotified)
+                {
+                    return false;
+                }
+
+                log.GoalNotified = false;
+                return true;
+            }
+
             if (log.GoalNotified)
             {
                 return false;
             }
 
-            var summary = WorkTimeCalculator.Compute(log, now, Goal);
-            if (summary.State == WorkState.NotStarted || !summary.GoalReached)
+            log.GoalNotified = true;
+            notify = true;
+            return true;
+        });
+
+        return notify;
+    }
+
+    /// <summary>
+    /// Забирает право сообщить об угаданном обеде. Отметка о показе привязана к началу
+    /// интервала: если догадку отменили и она перешла на следующую отлучку, сообщить нужно снова.
+    /// </summary>
+    /// <returns>Интервал, о котором надо сказать, либо <c>null</c>.</returns>
+    public BreakInterval? TryTakeLunchNotification(DateTimeOffset now)
+    {
+        BreakInterval? announce = null;
+
+        _store.TryUpdate(WorkDay.DateOf(now), log =>
+        {
+            var guessed = Compute(log, now).GuessedLunch;
+            if (guessed is null)
+            {
+                if (log.LunchNotifiedAt is null)
+                {
+                    return false;
+                }
+
+                log.LunchNotifiedAt = null;
+                return true;
+            }
+
+            if (log.LunchNotifiedAt is { } shown && shown.UtcTicks == guessed.Start.UtcTicks)
             {
                 return false;
             }
 
-            log.GoalNotified = true;
+            log.LunchNotifiedAt = guessed.Start;
+            announce = guessed;
             return true;
         });
+
+        return announce;
+    }
+
+    /// <summary>
+    /// Дописывает отметку. Версия правил проставляется при создании дня и дальше не меняется:
+    /// обновление посреди дня не должно посчитать его половины по-разному.
+    /// </summary>
+    private static void Append(DayLog log, Punch punch)
+    {
+        if (log.Punches.Count == 0)
+        {
+            log.RulesVersion ??= Core.RulesVersion.Current;
+        }
+
+        log.Punches.Add(punch);
+    }
 
     private static Punch? LastPunch(DayLog log) =>
         log.Punches.Count == 0 ? null : log.Punches.MaxBy(punch => punch.At);
