@@ -13,7 +13,16 @@
         <AssemblyName>GoHome</AssemblyName>
         <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
         <ApplicationDefaultFont>Segoe UI, 9pt</ApplicationDefaultFont>
+        <!-- Иконка проводника и панели задач. Вшивается в apphost на этапе сборки,
+             поэтому переживает и однофайловую публикацию: бандл несёт готовый apphost. -->
+        <ApplicationIcon>Resources\gohome.ico</ApplicationIcon>
     </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Тот же файл нужен и в рантайме — окнам и трею до первой отрисовки кольца.
+             Именно ресурсом сборки: рядом с однофайловым exe никаких файлов не лежит. -->
+        <EmbeddedResource Include="Resources\gohome.ico" />
+    </ItemGroup>
 
     <PropertyGroup>
         <!-- Ставится на корпоративную машину без прав на установку рантайма. -->

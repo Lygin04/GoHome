@@ -234,6 +234,7 @@ src/GoHome/Storage   файлы дней, атомарная запись
 src/GoHome/Interop   P/Invoke: простой пользователя, состояние блокировки, тема
 src/GoHome/Ui        кольцо, трей, окно истории
 src/GoHome/App       когда какую отметку писать, автозапуск
+src/GoHome/Resources gohome.ico — иконка exe и окон; кольцо в трее рисуется отдельно, в рантайме
 tests/GoHome.Tests   тесты; расчётный слой проверяется без Windows-специфики и без задержек
 ```
 

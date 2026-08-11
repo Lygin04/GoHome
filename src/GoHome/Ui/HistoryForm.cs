@@ -26,7 +26,8 @@ public sealed class HistoryForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(620, 320);
         ClientSize = new Size(680, 360);
-        ShowIcon = false;
+        Icon = AppIcon.ForWindows;
+        ShowIcon = Icon is not null;
         MinimizeBox = false;
 
         _days = new ListView

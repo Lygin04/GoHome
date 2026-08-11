@@ -41,7 +41,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         _uiThread = new Control();
         _ = _uiThread.Handle;
 
-        _notifyIcon = new NotifyIcon { Text = "GoHome" };
+        // Иконка приложения ставится сразу: между появлением значка в трее и первой
+        // отрисовкой кольца пустого места быть не должно.
+        _notifyIcon = new NotifyIcon { Text = "GoHome", Icon = AppIcon.ForTray };
         _ring = new TrayRing(_notifyIcon);
 
         _counterItem = new ToolStripMenuItem { Enabled = false };
