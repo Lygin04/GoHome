@@ -18,4 +18,19 @@ public static class WorkTimeFormat
     /// <summary>Время суток как <c>09:12</c>, либо прочерк.</summary>
     public static string Clock(DateTimeOffset? value) =>
         value is { } v ? v.ToLocalTime().ToString("HH:mm") : "—";
+
+    /// <summary>Длительность словами: <c>45 мин</c>, <c>1 ч 05 мин</c>.</summary>
+    public static string Minutes(TimeSpan value)
+    {
+        var abs = value.Duration();
+        var hours = (int)abs.TotalHours;
+        return hours > 0 ? $"{hours} ч {abs.Minutes:00} мин" : $"{abs.Minutes} мин";
+    }
+
+    /// <summary>Отлучка как <c>12:40–13:25 (45 мин)</c>.</summary>
+    public static string Interval(BreakInterval interval)
+    {
+        ArgumentNullException.ThrowIfNull(interval);
+        return $"{Clock(interval.Start)}–{Clock(interval.End)} ({Minutes(interval.Duration)})";
+    }
 }

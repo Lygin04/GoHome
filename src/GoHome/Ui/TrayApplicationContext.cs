@@ -24,12 +24,17 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _counterItem;
     private readonly ToolStripMenuItem _arrivedItem;
     private readonly ToolStripMenuItem _projectedItem;
+    private readonly ToolStripMenuItem _lunchItem;
+    private readonly ToolStripMenuItem _cancelLunchItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autostartItem;
 
     private DateOnly _day;
     private HistoryForm? _historyForm;
     private bool _disposed;
+
+    /// <summary>Сейчас висит подсказка про угаданный обед, и щелчок по ней означает отмену.</summary>
+    private bool _pendingLunchCancel;
 
     public TrayApplicationContext(GoHomeService service, Func<DateTimeOffset>? clock = null)
     {
@@ -49,9 +54,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _counterItem = new ToolStripMenuItem { Enabled = false };
         _arrivedItem = new ToolStripMenuItem { Enabled = false };
         _projectedItem = new ToolStripMenuItem { Enabled = false };
+        _lunchItem = new ToolStripMenuItem { Enabled = false, Visible = false };
+        _cancelLunchItem = new ToolStripMenuItem("Вернуть обед в зачёт") { Visible = false };
         _pauseItem = new ToolStripMenuItem("Пауза");
         _autostartItem = new ToolStripMenuItem("Запускать при входе в систему") { CheckOnClick = false };
 
+        _cancelLunchItem.Click += (_, _) => CancelLunch();
         _pauseItem.Click += (_, _) => TogglePause();
         _autostartItem.Click += (_, _) => ToggleAutostart();
 
@@ -70,6 +78,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _counterItem,
             _arrivedItem,
             _projectedItem,
+            _lunchItem,
+            _cancelLunchItem,
             new ToolStripSeparator(),
             _pauseItem,
             journalItem,
@@ -82,6 +92,11 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.DoubleClick += (_, _) => ShowHistory();
+
+        // У всплывающей подсказки нет кнопок, поэтому отмена — это щелчок по ней самой.
+        // Тот же пункт лежит в меню и доступен до конца дня, а не пока висит уведомление.
+        _notifyIcon.BalloonTipClicked += (_, _) => OnBalloonClicked();
+        _notifyIcon.BalloonTipClosed += (_, _) => _pendingLunchCancel = false;
 
         var now = _clock();
         _day = WorkDay.DateOf(now);
@@ -124,13 +139,50 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var summary = Refresh(now);
 
+        // Про обед сообщаем первым: он меняет счётчик, и уведомление про норму
+        // должно исходить уже из поправленного времени.
+        if (_service.TryTakeLunchNotification(now) is { } lunch)
+        {
+            _pendingLunchCancel = true;
+            _notifyIcon.ShowBalloonTip(
+                BalloonTimeoutMs,
+                "GoHome",
+                $"Перерыв {WorkTimeFormat.Interval(lunch)} засчитан обедом и не идёт в рабочее время. "
+                    + "Щёлкните здесь, если это был не обед.",
+                ToolTipIcon.Info);
+
+            summary = Refresh(now);
+        }
+
         if (_service.TryTakeGoalNotification(now))
         {
+            _pendingLunchCancel = false;
             _notifyIcon.ShowBalloonTip(
                 BalloonTimeoutMs,
                 "GoHome",
                 $"Норма отработана: {WorkTimeFormat.Duration(summary.Worked)}. Можно домой.",
                 ToolTipIcon.Info);
+        }
+    }
+
+    /// <summary>Щелчок по подсказке отменяет догадку, только если подсказка была про обед.</summary>
+    private void OnBalloonClicked()
+    {
+        if (!_pendingLunchCancel)
+        {
+            return;
+        }
+
+        _pendingLunchCancel = false;
+        CancelLunch();
+    }
+
+    private void CancelLunch()
+    {
+        var now = _clock();
+        if (_service.CancelGuessedLunch(now))
+        {
+            Refresh(now);
         }
     }
 
@@ -160,6 +212,22 @@ public sealed class TrayApplicationContext : ApplicationContext
             WorkState.Finished => $"Уход: {WorkTimeFormat.Clock(summary.LeftAt)}",
             _ => "Прогноз: —",
         };
+
+        var unpaid = summary.UnpaidIntervals.ToList();
+        _lunchItem.Visible = unpaid.Count > 0;
+        _lunchItem.Text = unpaid.Count switch
+        {
+            0 => string.Empty,
+            1 => $"Обед: {WorkTimeFormat.Interval(unpaid[0])}",
+            _ => $"Не в зачёт: {WorkTimeFormat.Minutes(summary.Unpaid)} в {unpaid.Count} перерывах",
+        };
+
+        // Пункт живёт, пока догадка не отменена, — то есть до конца дня, а не пока висит подсказка.
+        _cancelLunchItem.Visible = summary.GuessedLunch is not null;
+        if (summary.GuessedLunch is { } guessed)
+        {
+            _cancelLunchItem.Text = $"Вернуть {WorkTimeFormat.Interval(guessed)} в зачёт";
+        }
 
         _pauseItem.Text = summary.State == WorkState.Working ? "Пауза" : "Продолжить";
         _pauseItem.Enabled = summary.State != WorkState.NotStarted || !WorkstationState.IsLocked();
@@ -231,6 +299,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         var result = Autostart.IsEnabled() ? Autostart.Disable() : Autostart.Enable();
         if (!result.Success)
         {
+            // Чужая подсказка перебивает обеденную: щелчок по ней ничего отменять не должен.
+            _pendingLunchCancel = false;
             _notifyIcon.ShowBalloonTip(
                 BalloonTimeoutMs,
                 "GoHome",
@@ -338,6 +408,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private static string Tooltip(DaySummary summary)
     {
         var counter = $"{WorkTimeFormat.Duration(summary.Worked)} / {WorkTimeFormat.Duration(summary.Goal)}";
+        if (summary.Unpaid > TimeSpan.Zero)
+        {
+            counter += $" (обед {WorkTimeFormat.Minutes(summary.Unpaid)})";
+        }
+
         return summary.State switch
         {
             WorkState.NotStarted => "GoHome — день не начат",
