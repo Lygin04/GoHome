@@ -8,19 +8,30 @@ public static class HistoryCalculator
         IEnumerable<DayLog> logs,
         DateTimeOffset now,
         int days,
-        TimeSpan goal)
+        TimeSpan goal,
+        LunchRules? lunch = null)
     {
         ArgumentNullException.ThrowIfNull(logs);
         ArgumentOutOfRangeException.ThrowIfLessThan(days, 1);
 
+        var rules = lunch ?? LunchRules.Default;
         var today = WorkDay.DateOf(now);
         var from = today.AddDays(-(days - 1));
 
         return logs
             .Where(log => log.Date >= from && log.Date <= today)
-            .Select(log => WorkTimeCalculator.Compute(log, now, goal))
+            .Select(log => WorkTimeCalculator.Compute(log, now, goal, rules))
             .OrderByDescending(summary => summary.Date)
             .ToList();
+    }
+
+    /// <summary>В выборке есть дни, посчитанные по разным правилам.</summary>
+    public static bool HasMixedRules(IEnumerable<DaySummary> summaries)
+    {
+        ArgumentNullException.ThrowIfNull(summaries);
+
+        var counted = summaries.Where(summary => summary.State != WorkState.NotStarted).ToList();
+        return counted.Count > 0 && counted.Any(s => s.OnlyLunchUnpaid) && counted.Any(s => !s.OnlyLunchUnpaid);
     }
 
     /// <summary>Суммарно отработано.</summary>

@@ -21,7 +21,27 @@ internal static class TestClock
     public static DayLog Log(DateOnly date, params Punch[] punches) =>
         new() { Date = date, Punches = [.. punches] };
 
+    /// <summary>Журнал без версии правил — то есть по старым: любая блокировка вне зачёта.</summary>
     public static DayLog Log(params Punch[] punches) => Log(Today, punches);
+
+    /// <summary>Журнал по действующим правилам: в зачёт не идёт только обед.</summary>
+    public static DayLog Fresh(params Punch[] punches) =>
+        new() { Date = Today, Punches = [.. punches], RulesVersion = RulesVersion.Current };
+
+    /// <summary>Поправка к классификации отлучки, начавшейся в указанный момент.</summary>
+    public static BreakAdjustment Paid(int hour, int minute = 0) =>
+        new(At(hour, minute), BreakKind.Paid, "test");
+
+    /// <inheritdoc cref="Paid"/>
+    public static BreakAdjustment Unpaid(int hour, int minute = 0) =>
+        new(At(hour, minute), BreakKind.Unpaid, "test");
+
+    /// <summary>Тот же журнал с приложенными поправками.</summary>
+    public static DayLog With(this DayLog log, params BreakAdjustment[] adjustments)
+    {
+        log.Adjustments = [.. adjustments];
+        return log;
+    }
 
     public static Punch In(int hour, int minute = 0, int dayShift = 0) =>
         new(At(hour, minute, dayShift), PunchKind.In);
