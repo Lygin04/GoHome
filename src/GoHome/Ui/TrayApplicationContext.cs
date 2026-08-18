@@ -33,6 +33,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private DateOnly _day;
     private HistoryForm? _historyForm;
+    private SettingsForm? _settingsForm;
     private bool _disposed;
 
     /// <summary>Сейчас висит подсказка про угаданный обед, и щелчок по ней означает отмену.</summary>
@@ -71,6 +72,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         var historyItem = new ToolStripMenuItem("История за неделю…");
         historyItem.Click += (_, _) => ShowHistory();
 
+        var settingsItem = new ToolStripMenuItem("Настройки…");
+        settingsItem.Click += (_, _) => ShowSettings();
+
         var exitItem = new ToolStripMenuItem("Выход");
         exitItem.Click += (_, _) => ExitApplication();
 
@@ -86,6 +90,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _pauseItem,
             journalItem,
             historyItem,
+            settingsItem,
             new ToolStripSeparator(),
             _autostartItem,
             exitItem,
@@ -145,7 +150,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var summary = Refresh(now);
 
-        if (_service.TryTakeStorageAlert() is { } alert)
+        if ((_service.TryTakeStorageAlert() ?? _service.TryTakeSettingsAlert()) is { } alert)
         {
             // Подсказка, а не модальное окно: учёт продолжается, а человек чинит файл,
             // когда ему удобно. Остальные уведомления подождут следующего тика — своё
@@ -336,6 +341,34 @@ public sealed class TrayApplicationContext : ApplicationContext
         _historyForm.Activate();
     }
 
+    private void ShowSettings()
+    {
+        if (_settingsForm is null || _settingsForm.IsDisposed)
+        {
+            // Файл могли поправить руками с прошлого открытия — форма должна показать то,
+            // что действует на самом деле.
+            _service.ReloadSettings();
+
+            _settingsForm = new SettingsForm(_service, _clock);
+            _settingsForm.FormClosed += (_, _) => _settingsForm = null;
+
+            // Изменённые предпочтения доходят до работающего приложения сразу.
+            _settingsForm.Saved += (_, _) =>
+            {
+                Refresh(_clock());
+                _historyForm?.Reload();
+            };
+        }
+
+        _settingsForm.Show();
+        if (_settingsForm.WindowState == FormWindowState.Minimized)
+        {
+            _settingsForm.WindowState = FormWindowState.Normal;
+        }
+
+        _settingsForm.Activate();
+    }
+
     private void ToggleAutostart()
     {
         var result = Autostart.IsEnabled() ? Autostart.Disable() : Autostart.Enable();
@@ -487,6 +520,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _notifyIcon.Dispose();
 
             _historyForm?.Dispose();
+            _settingsForm?.Dispose();
             _uiThread.Dispose();
         }
 

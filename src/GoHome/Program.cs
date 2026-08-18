@@ -32,10 +32,12 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
-        Application.SetColorMode(SystemColorMode.System);
         CatchEverything();
 
+        // Настройки читаются до первого окна: тема окон задаётся один раз на приложение,
+        // и менять её после создания окна поздно.
         var settings = new SettingsStore();
+        WindowTheme.Apply(settings.Current.Theme);
 
         using var context = new TrayApplicationContext(new GoHomeService(new DayLogStore(), settings));
         Application.Run(context);
