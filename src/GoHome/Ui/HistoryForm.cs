@@ -15,6 +15,8 @@ public sealed class HistoryForm : Form
     private readonly ListView _intervals;
     private readonly Label _intervalsHint;
     private readonly Button _toggle;
+    private readonly Button _markDay;
+    private readonly Button _clearDay;
     private readonly Label _total;
 
     /// <summary>Списки перестраиваются кодом, и выбор при этом меняется сам — это не правка человека.</summary>
@@ -49,14 +51,15 @@ public sealed class HistoryForm : Form
         };
 
         _days.Columns.Add("День", 130);
-        _days.Columns.Add("Приход", 75, HorizontalAlignment.Center);
-        _days.Columns.Add("Уход", 75, HorizontalAlignment.Center);
-        _days.Columns.Add("Перерывы", 85, HorizontalAlignment.Center);
-        _days.Columns.Add("Не в зачёт", 85, HorizontalAlignment.Center);
-        _days.Columns.Add("Отработано", 95, HorizontalAlignment.Center);
-        _days.Columns.Add("Баланс", 80, HorizontalAlignment.Center);
-        _days.Columns.Add("Правила", 70, HorizontalAlignment.Center);
-        _days.Columns.Add("", 60);
+        _days.Columns.Add("Цель", 70, HorizontalAlignment.Center);
+        _days.Columns.Add("Приход", 70, HorizontalAlignment.Center);
+        _days.Columns.Add("Уход", 70, HorizontalAlignment.Center);
+        _days.Columns.Add("Перерывы", 80, HorizontalAlignment.Center);
+        _days.Columns.Add("Не в зачёт", 80, HorizontalAlignment.Center);
+        _days.Columns.Add("Отработано", 90, HorizontalAlignment.Center);
+        _days.Columns.Add("Баланс", 75, HorizontalAlignment.Center);
+        _days.Columns.Add("Отлучки", 85, HorizontalAlignment.Center);
+        _days.Columns.Add("", 55);
         _days.SelectedIndexChanged += (_, _) => ShowIntervals();
 
         // Галочек здесь намеренно нет. ListView присылает уведомление о смене галочки
@@ -112,6 +115,25 @@ public sealed class HistoryForm : Form
         breaks.Controls.Add(_toggle);
         breaks.Controls.Add(_intervalsHint);
 
+        // Пометить день особым задним числом нужно чаще, чем заранее: про отгул вспоминают,
+        // когда смотрят на минус в балансе, а не когда его планируют.
+        _markDay = new Button { Text = "Пометить день…", Width = 150, Enabled = false };
+        _markDay.Click += (_, _) => MarkSelectedDay();
+
+        _clearDay = new Button { Text = "Вернуть в график", Width = 150, Enabled = false };
+        _clearDay.Click += (_, _) => ClearSelectedDay();
+
+        var dayActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Height = 38,
+            Padding = new Padding(8, 4, 8, 4),
+        };
+
+        dayActions.Controls.AddRange([_markDay, _clearDay]);
+
         _total = new Label
         {
             Dock = DockStyle.Bottom,
@@ -121,6 +143,7 @@ public sealed class HistoryForm : Form
         };
 
         Controls.Add(_days);
+        Controls.Add(dayActions);
         Controls.Add(breaks);
         Controls.Add(_total);
 
@@ -149,6 +172,7 @@ public sealed class HistoryForm : Form
         {
             var started = day.State != WorkState.NotStarted;
             var item = new ListViewItem(DayTitle(day.Date)) { Tag = day };
+            item.SubItems.Add(GoalTitle(day));
             item.SubItems.Add(WorkTimeFormat.Clock(day.ArrivedAt));
             item.SubItems.Add(WorkTimeFormat.Clock(day.LeftAt));
             item.SubItems.Add(started ? WorkTimeFormat.Duration(day.Breaks) : "—");
@@ -178,17 +202,22 @@ public sealed class HistoryForm : Form
         _days.EndUpdate();
         _filling = false;
 
-        var worked = HistoryCalculator.TotalWorked(history);
-        var balance = HistoryCalculator.TotalBalance(history);
-        var total = $"За неделю: {WorkTimeFormat.Duration(worked)}   ·   баланс {WorkTimeFormat.SignedDuration(balance)}";
+        // Недельный баланс — про календарную неделю с понедельника, а не про последние
+        // семь дней в списке выше. Это разные числа, и подписаны они по-разному.
+        var week = _service.Week(now);
+        var total = $"Неделя {DayTitle(week.Start)} — {DayTitle(week.End)}: "
+            + $"{WorkTimeFormat.Duration(week.Worked)} из {WorkTimeFormat.Duration(week.Norm)}"
+            + $"   ·   баланс {WorkTimeFormat.SignedDuration(week.Balance)}";
+
         if (HistoryCalculator.HasMixedRules(history))
         {
             total += Environment.NewLine
-                + "Дни по старым правилам считались иначе: из зачёта выпадала любая блокировка.";
+                + "Дни считались по разным правилам: где-то из зачёта выпадала любая блокировка, где-то только обед.";
         }
 
         _total.Text = total;
         ShowIntervals(keepInterval);
+        UpdateDayActions();
     }
 
     /// <summary>Перерывы выбранного дня.</summary>
@@ -277,12 +306,57 @@ public sealed class HistoryForm : Form
         Reload();
     }
 
+    /// <summary>Пометить выбранный день нерабочим или задать ему свою продолжительность.</summary>
+    private void MarkSelectedDay()
+    {
+        if (SelectedDay() is not { } day)
+        {
+            return;
+        }
+
+        var settings = _service.Settings;
+        using var dialog = new DayExceptionDialog(
+            day.Date,
+            settings.ExceptionFor(day.Date),
+            settings.Schedule[day.Date.DayOfWeek],
+            lockDate: true);
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _service.SaveSettings(settings.WithException(day.Date, dialog.Result), _clock());
+
+            // День уже прожит, и его снимок пора обновить: цель — единственное, что можно
+            // поправить задним числом, не пересчитывая уже засчитанные минуты по-другому.
+            _service.RefreshGoal(day.Date);
+            Reload();
+        }
+    }
+
+    private void ClearSelectedDay()
+    {
+        if (SelectedDay() is not { } day)
+        {
+            return;
+        }
+
+        _service.SaveSettings(_service.Settings.WithException(day.Date, null), _clock());
+        _service.RefreshGoal(day.Date);
+        Reload();
+    }
+
+    private void UpdateDayActions()
+    {
+        var day = SelectedDay();
+        _markDay.Enabled = day is not null;
+        _clearDay.Enabled = day is not null && _service.Settings.ExceptionFor(day.Date) is not null;
+    }
+
     private static string IntervalNote(BreakInterval interval, DaySummary day)
     {
         if (!day.CountsShortBreaks)
         {
             return interval.IsUnpaid
-                ? "по старым правилам любой перерыв вне зачёта"
+                ? "короткие отлучки не засчитываются, перерыв вне зачёта"
                 : "возвращён в зачёт вручную";
         }
 
@@ -305,7 +379,11 @@ public sealed class HistoryForm : Form
     private static string DayTitle(DateOnly date) =>
         date.ToString("dd.MM", Russian) + ", " + date.ToDateTime(TimeOnly.MinValue).ToString("dddd", Russian);
 
-    private static string RulesTitle(DaySummary day) => day.CountsShortBreaks ? "новые" : "старые";
+    /// <summary>Цель дня. У нерабочего её нет, и это не ноль часов.</summary>
+    private static string GoalTitle(DaySummary day) =>
+        day.IsDayOff ? "нерабочий" : WorkTimeFormat.Duration(day.Goal);
+
+    private static string RulesTitle(DaySummary day) => day.CountsShortBreaks ? "в зачёт" : "режутся";
 
     private static string StateTitle(WorkState state) => state switch
     {
