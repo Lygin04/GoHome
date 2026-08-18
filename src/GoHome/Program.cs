@@ -35,7 +35,9 @@ internal static class Program
         Application.SetColorMode(SystemColorMode.System);
         CatchEverything();
 
-        using var context = new TrayApplicationContext(new GoHomeService(new DayLogStore()));
+        var settings = new SettingsStore();
+
+        using var context = new TrayApplicationContext(new GoHomeService(new DayLogStore(), settings));
         Application.Run(context);
         return 0;
     }

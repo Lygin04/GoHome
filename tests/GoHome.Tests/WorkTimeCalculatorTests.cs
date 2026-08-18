@@ -250,11 +250,11 @@ public class WorkTimeCalculatorTests
     }
 
     [Fact]
-    public void Норма_задаётся_параметром()
+    public void Норма_берётся_из_правил_дня()
     {
         var log = Log(In(9));
 
-        var summary = WorkTimeCalculator.Compute(log, At(15), Hm(6));
+        var summary = WorkTimeCalculator.Compute(log, At(15), Goal(Hm(6)));
 
         Assert.True(summary.GoalReached);
         Assert.Equal(Hm(6), summary.Goal);

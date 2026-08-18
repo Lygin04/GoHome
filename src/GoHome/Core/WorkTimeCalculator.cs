@@ -9,17 +9,18 @@ public static class WorkTimeCalculator
     /// <summary>Норма рабочего дня.</summary>
     public static readonly TimeSpan DefaultGoal = TimeSpan.FromHours(8);
 
-    /// <inheritdoc cref="Compute(DayLog, DateTimeOffset, TimeSpan, LunchRules)"/>
-    public static DaySummary Compute(DayLog log, DateTimeOffset now) =>
-        Compute(log, now, DefaultGoal, LunchRules.Default);
-
-    /// <inheritdoc cref="Compute(DayLog, DateTimeOffset, TimeSpan, LunchRules)"/>
-    public static DaySummary Compute(DayLog log, DateTimeOffset now, TimeSpan goal) =>
-        Compute(log, now, goal, LunchRules.Default);
+    /// <inheritdoc cref="Compute(DayLog, DateTimeOffset, DayRules?)"/>
+    public static DaySummary Compute(DayLog log, DateTimeOffset now) => Compute(log, now, null);
 
     /// <summary>
     /// Пересчитывает день из журнала.
     /// </summary>
+    /// <param name="log">Журнал дня.</param>
+    /// <param name="now">Момент расчёта.</param>
+    /// <param name="current">
+    /// Правила и цель, действующие сейчас. Берутся только для дня, который ещё не начинался:
+    /// у начатого дня есть собственный снимок, и менять его задним числом нельзя.
+    /// </param>
     /// <remarks>
     /// Нормализация применяется здесь, а не при записи:
     /// <list type="bullet">
@@ -27,15 +28,15 @@ public static class WorkTimeCalculator
     /// <item>висящий перерыв в уже закрытом дне — это уход: человек нажал Win+L и пошёл домой;</item>
     /// <item>висящий перерыв в текущем дне остаётся перерывом: человек отошёл.</item>
     /// </list>
-    /// Классификация отлучек — оттуда же: в зачёт не идёт только обед, и определяется он
-    /// правилами <see cref="LunchRules"/> и поправками из журнала, а не типом отметки.
-    /// Дни, начатые до смены правил, считаются по-старому — см. <see cref="RulesVersion"/>.
+    /// Классификация отлучек — оттуда же: чем оказалась отлучка, определяют правила дня
+    /// <see cref="DayRules"/> и поправки из журнала, а не тип отметки.
     /// </remarks>
-    public static DaySummary Compute(DayLog log, DateTimeOffset now, TimeSpan goal, LunchRules rules)
+    public static DaySummary Compute(DayLog log, DateTimeOffset now, DayRules? current)
     {
         ArgumentNullException.ThrowIfNull(log);
-        ArgumentNullException.ThrowIfNull(rules);
 
+        var day = DayRules.Of(log, current);
+        var rules = day.Lunch;
         var isCurrentDay = WorkDay.DateOf(now) == log.Date;
 
         // Сортировка устойчивая, поэтому у отметок с одинаковой меткой времени
@@ -140,8 +141,7 @@ public static class WorkTimeCalculator
             state = WorkState.Finished;
         }
 
-        var version = RulesVersion.Of(log);
-        var intervals = Classify(closed, log.Adjustments, rules, version);
+        var intervals = Classify(closed, log.Adjustments, rules, day.CountShortBreaks);
 
         var unpaid = TimeSpan.Zero;
         var paidBreaks = TimeSpan.Zero;
@@ -165,7 +165,9 @@ public static class WorkTimeCalculator
         // а оборвавшаяся уходом — это уже дорога домой; ни ту, ни другую в зачёт не берём.
         var worked = atDesk + paidBreaks;
 
-        var projectedEnd = state == WorkState.Working
+        // В нерабочий день прогнозировать нечего: цели, к которой идти, нет.
+        var goal = day.GoalOrZero;
+        var projectedEnd = state == WorkState.Working && !day.IsDayOff
             ? now + (worked >= goal ? TimeSpan.Zero : goal - worked)
             : (DateTimeOffset?)null;
 
@@ -177,36 +179,35 @@ public static class WorkTimeCalculator
             arrivedAt,
             leftAt,
             projectedEnd,
-            goal,
             unpaid,
             Significant(intervals, rules),
-            version);
+            day);
     }
 
     /// <summary>
     /// Раздаёт отлучкам зачёт. Порядок такой: сперва поправка человека, если она есть,
-    /// затем правила версии, и только потом догадка.
+    /// затем правила дня, и только потом догадка.
     /// </summary>
     private static List<BreakInterval> Classify(
         List<(DateTimeOffset Start, DateTimeOffset End)> closed,
         List<BreakAdjustment>? adjustments,
         LunchRules rules,
-        int version)
+        bool countShortBreaks)
     {
-        var onlyLunchUnpaid = RulesVersion.OnlyLunchUnpaid(version);
         var intervals = new List<BreakInterval>(closed.Count);
 
         foreach (var (start, end) in closed)
         {
             var fixedKind = AdjustmentFor(adjustments, start);
 
-            // По старым правилам в зачёт не шла ни одна отлучка. Явная поправка человека
-            // сильнее и там: он поправляет уже посчитанный день осознанно.
-            var kind = fixedKind ?? (onlyLunchUnpaid ? BreakKind.Paid : BreakKind.Unpaid);
+            // При выключенном зачёте коротких отлучек не идёт в зачёт ни одна: счёт
+            // останавливает любая блокировка. Явная поправка человека сильнее и там —
+            // он поправляет уже посчитанный день осознанно.
+            var kind = fixedKind ?? (countShortBreaks ? BreakKind.Paid : BreakKind.Unpaid);
             intervals.Add(new BreakInterval(start, end, kind, Guessed: false));
         }
 
-        if (!onlyLunchUnpaid)
+        if (!countShortBreaks)
         {
             return intervals;
         }

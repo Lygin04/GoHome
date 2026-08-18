@@ -279,7 +279,7 @@ public sealed class HistoryForm : Form
 
     private static string IntervalNote(BreakInterval interval, DaySummary day)
     {
-        if (!day.OnlyLunchUnpaid)
+        if (!day.CountsShortBreaks)
         {
             return interval.IsUnpaid
                 ? "по старым правилам любой перерыв вне зачёта"
@@ -305,7 +305,7 @@ public sealed class HistoryForm : Form
     private static string DayTitle(DateOnly date) =>
         date.ToString("dd.MM", Russian) + ", " + date.ToDateTime(TimeOnly.MinValue).ToString("dddd", Russian);
 
-    private static string RulesTitle(DaySummary day) => day.OnlyLunchUnpaid ? "новые" : "старые";
+    private static string RulesTitle(DaySummary day) => day.CountsShortBreaks ? "новые" : "старые";
 
     private static string StateTitle(WorkState state) => state switch
     {

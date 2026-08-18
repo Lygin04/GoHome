@@ -13,12 +13,14 @@ public sealed class GoHomeServiceTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     private readonly DayLogStore _store;
+    private readonly SettingsStore _settings;
     private readonly GoHomeService _service;
 
     public GoHomeServiceTests()
     {
         _store = new DayLogStore(_root);
-        _service = new GoHomeService(_store);
+        _settings = TestApp.Settings(_root);
+        _service = new GoHomeService(_store, _settings);
     }
 
     public void Dispose()
@@ -139,6 +141,69 @@ public sealed class GoHomeServiceTests : IDisposable
     }
 
     [Fact]
+    public void Heartbeat_не_переписывает_файл_каждую_минуту()
+    {
+        _service.RecordReturn(At(9), "unlock");
+
+        // Около пятисот перезаписей за день — это пятьсот поводов для антивируса
+        // и проводника вмешаться. Метки живучести столько внимания не стоят.
+        _service.Heartbeat(At(9, 1), TimeSpan.Zero);
+        _service.Heartbeat(At(9, 2), TimeSpan.Zero);
+        _service.Heartbeat(At(9, 3), TimeSpan.Zero);
+
+        Assert.Equal(At(9), _store.Load(Today).LastHeartbeat);
+    }
+
+    [Fact]
+    public void Heartbeat_доходит_до_файла_по_своему_расписанию()
+    {
+        _service.RecordReturn(At(9), "unlock");
+        _service.Heartbeat(At(9, 1), TimeSpan.Zero);
+
+        var due = At(9) + GoHomeService.HeartbeatInterval;
+        _service.Heartbeat(due, TimeSpan.Zero);
+
+        Assert.Equal(due, _store.Load(Today).LastHeartbeat);
+    }
+
+    [Fact]
+    public void Пауза_и_выход_сбрасывают_метки_не_дожидаясь_расписания()
+    {
+        _service.RecordReturn(At(9), "unlock");
+
+        // Момент, после которого машина может и не проснуться: ждать расписания нельзя.
+        _service.RecordPause(At(9, 1), TimeSpan.Zero, "SessionLock");
+        Assert.Equal(At(9, 1), _store.Load(Today).LastHeartbeat);
+
+        _service.FlushHeartbeat(At(9, 2), TimeSpan.Zero);
+        Assert.Equal(At(9, 2), _store.Load(Today).LastHeartbeat);
+    }
+
+    [Fact]
+    public void Накопленное_за_время_недоступности_файла_не_теряется()
+    {
+        _store.WriteBackoff = [];
+        _service.RecordReturn(At(9), "unlock");
+
+        using (new FileStream(_store.PathFor(Today), FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+        {
+            // Файл занят: ни одна запись за это время не доходит до диска.
+            _service.RecordPause(At(13), TimeSpan.Zero, "SessionLock");
+            _service.RecordReturn(At(14), "SessionUnlock");
+            _service.Heartbeat(At(17), TimeSpan.Zero);
+
+            // Счётчик при этом идёт по накопленному в памяти, а не по устаревшему файлу.
+            Assert.Equal(Hm(7), _service.Summarize(At(17)).Worked);
+        }
+
+        _service.FlushHeartbeat(At(18), TimeSpan.Zero);
+
+        var log = _store.Load(Today);
+        Assert.Equal([At(9), At(13), At(14)], log.Punches.Select(punch => punch.At));
+        Assert.Equal(At(18), log.LastHeartbeat);
+    }
+
+    [Fact]
     public void Незакрытый_вчерашний_день_закрывается_по_последней_активности()
     {
         var yesterday = Today.AddDays(-1);
@@ -192,7 +257,7 @@ public sealed class GoHomeServiceTests : IDisposable
         _service.RecordReturn(At(9), "unlock");
         Assert.True(_service.TryTakeGoalNotification(At(17)));
 
-        var restarted = new GoHomeService(new DayLogStore(_root));
+        var restarted = TestApp.Service(_root);
         Assert.False(restarted.TryTakeGoalNotification(At(17, 30)));
     }
 
@@ -210,7 +275,7 @@ public sealed class GoHomeServiceTests : IDisposable
         _service.RecordReturn(At(14), "unlock");
 
         // Процесс убили, приложение поднялось заново на том же каталоге.
-        var restarted = new GoHomeService(new DayLogStore(_root));
+        var restarted = TestApp.Service(_root);
         restarted.CloseStaleDays(At(15));
         restarted.RecordReturn(At(15), "startup");
 

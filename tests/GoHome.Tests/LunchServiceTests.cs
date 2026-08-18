@@ -17,12 +17,14 @@ public sealed class LunchServiceTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     private readonly DayLogStore _store;
+    private readonly SettingsStore _settings;
     private readonly GoHomeService _service;
 
     public LunchServiceTests()
     {
         _store = new DayLogStore(_root);
-        _service = new GoHomeService(_store);
+        _settings = TestApp.Settings(_root);
+        _service = new GoHomeService(_store, _settings);
     }
 
     public void Dispose()
@@ -34,25 +36,59 @@ public sealed class LunchServiceTests : IDisposable
     }
 
     [Fact]
-    public void Новый_день_помечается_действующей_версией_правил()
+    public void Новый_день_получает_снимок_действующих_настроек()
     {
         _service.RecordReturn(At(9), "unlock");
 
-        Assert.Equal(RulesVersion.Current, _store.Load(Today).RulesVersion);
+        var rules = _store.Load(Today).Rules;
+        Assert.NotNull(rules);
+        Assert.True(rules.CountShortBreaks);
+        Assert.Equal(WorkTimeCalculator.DefaultGoal, rules.Goal);
+        Assert.Equal(LunchRules.Default, rules.Lunch);
     }
 
     [Fact]
-    public void Версия_дня_не_меняется_после_создания()
+    public void Правила_дня_не_меняются_после_создания()
     {
         // Обновление приехало в середине дня: день обязан досчитаться по своим правилам.
-        _store.Save(Log(In(9)));
-        Assert.Null(_store.Load(Today).RulesVersion);
+        _store.Save(Log(In(9)).By(AllBreaksCut));
 
         _service.RecordPause(At(12, 30), TimeSpan.Zero, "lock");
         _service.RecordReturn(At(13, 15), "unlock");
 
-        Assert.Null(_store.Load(Today).RulesVersion);
+        Assert.False(_store.Load(Today).Rules?.CountShortBreaks);
         Assert.Equal(Hm(3, 30), _service.Summarize(At(13, 15)).Worked);
+    }
+
+    [Fact]
+    public void Смена_настроек_посреди_дня_не_трогает_правила_расчёта()
+    {
+        _service.RecordReturn(At(9), "unlock");
+
+        // Пятиминутная отлучка вне обеденного окна: при включённом зачёте идёт
+        // в рабочее время, при выключенном — режется. На ней разница и видна.
+        _service.RecordPause(At(10), TimeSpan.Zero, "lock");
+        _service.RecordReturn(At(10, 5), "unlock");
+        Assert.Equal(Hm(4), _service.Summarize(At(13)).Worked);
+
+        _service.SaveSettings(_service.Settings with { CountShortBreaks = false }, At(13));
+
+        // Первая половина дня не должна оказаться посчитана иначе, чем вторая.
+        Assert.True(_store.Load(Today).Rules?.CountShortBreaks);
+        Assert.Equal(Hm(4), _service.Summarize(At(13)).Worked);
+    }
+
+    [Fact]
+    public void Смена_цели_посреди_дня_доходит_до_сегодняшнего_дня()
+    {
+        _service.RecordReturn(At(9), "unlock");
+
+        // Цель — не правило: она только сравнивается с итогом, и поправить её
+        // сегодняшним числом безопасно.
+        _service.SaveSettings(_service.Settings with { Schedule = Flat(Hm(6)) }, At(13));
+
+        Assert.Equal(Hm(6), _store.Load(Today).Rules?.Goal);
+        Assert.Equal(Hm(6), _service.Summarize(At(13)).Goal);
     }
 
     [Fact]
@@ -171,7 +207,7 @@ public sealed class LunchServiceTests : IDisposable
 
         _service.Reclassify(Today, At(12, 30), BreakKind.Paid, "history");
 
-        var reloaded = new GoHomeService(new DayLogStore(_root));
+        var reloaded = TestApp.Service(_root);
         Assert.Equal(Hm(4, 15), reloaded.Summarize(At(13, 15)).Worked);
     }
 

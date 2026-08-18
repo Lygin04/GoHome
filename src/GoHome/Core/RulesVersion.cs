@@ -1,12 +1,15 @@
 namespace GoHome.Core;
 
 /// <summary>
-/// Версия правил учёта, по которым считается день.
+/// Устаревшая версия правил учёта — поле <c>rulesVersion</c> в файлах дней,
+/// созданных до появления снимка настроек.
 /// </summary>
 /// <remarks>
-/// Накопленные дни не пересчитываются: версия проставляется при создании дня и дальше
-/// не меняется. Если обновление приедет в середине дня, он досчитается по тем правилам,
-/// по которым начался — иначе первая половина дня окажется посчитана иначе, чем вторая.
+/// Механизма как такового больше нет: правила дня описывает <see cref="DayRules"/>,
+/// и версия целиком в него укладывается — день по старым правилам это день,
+/// в снимке которого выключен <see cref="DayRules.CountShortBreaks"/>. Здесь остались
+/// только числа, нужные, чтобы прочитать накопленные файлы ровно как раньше;
+/// новым дням версия не проставляется.
 /// </remarks>
 public static class RulesVersion
 {
@@ -15,16 +18,6 @@ public static class RulesVersion
 
     /// <summary>Из рабочего времени вычитается только обед, остальные отлучки идут в зачёт.</summary>
     public const int OnlyLunchIsUnpaid = 2;
-
-    /// <summary>Версия, которой помечаются новые дни.</summary>
-    public const int Current = OnlyLunchIsUnpaid;
-
-    /// <summary>Версия правил этого дня. Отсутствующее поле означает самые старые правила.</summary>
-    public static int Of(DayLog log)
-    {
-        ArgumentNullException.ThrowIfNull(log);
-        return log.RulesVersion is { } version && version > BreaksAreUnpaid ? version : BreaksAreUnpaid;
-    }
 
     /// <summary>По этим правилам в зачёт не идёт только обед.</summary>
     public static bool OnlyLunchUnpaid(int version) => version >= OnlyLunchIsUnpaid;

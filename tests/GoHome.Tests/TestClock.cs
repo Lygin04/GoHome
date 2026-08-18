@@ -21,12 +21,47 @@ internal static class TestClock
     public static DayLog Log(DateOnly date, params Punch[] punches) =>
         new() { Date = date, Punches = [.. punches] };
 
-    /// <summary>Журнал без версии правил — то есть по старым: любая блокировка вне зачёта.</summary>
+    /// <summary>
+    /// Журнал без снимка правил — то есть по самым старым: любая блокировка вне зачёта.
+    /// Так выглядят все файлы, накопленные до появления снимка настроек.
+    /// </summary>
     public static DayLog Log(params Punch[] punches) => Log(Today, punches);
 
-    /// <summary>Журнал по действующим правилам: в зачёт не идёт только обед.</summary>
+    /// <summary>Журнал со снимком нынешних правил: в зачёт не идёт только обед.</summary>
     public static DayLog Fresh(params Punch[] punches) =>
-        new() { Date = Today, Punches = [.. punches], RulesVersion = RulesVersion.Current };
+        new() { Date = Today, Punches = [.. punches], Rules = DayRules.Default };
+
+    /// <summary>Тот же журнал со своим снимком правил и цели.</summary>
+    public static DayLog By(this DayLog log, DayRules rules)
+    {
+        log.Rules = rules;
+        return log;
+    }
+
+    /// <summary>Правила по умолчанию с другой целью. <c>null</c> — нерабочий день.</summary>
+    public static DayRules Goal(TimeSpan? goal) => DayRules.Default with { Goal = goal };
+
+    /// <summary>Правила, в которых счёт останавливает любая блокировка.</summary>
+    public static DayRules AllBreaksCut => DayRules.Default with { CountShortBreaks = false };
+
+    /// <summary>Одинаковая продолжительность во все семь дней — график, который не мешает тесту.</summary>
+    public static WeekSchedule Flat(TimeSpan? hours) => new()
+    {
+        Monday = hours,
+        Tuesday = hours,
+        Wednesday = hours,
+        Thursday = hours,
+        Friday = hours,
+        Saturday = hours,
+        Sunday = hours,
+    };
+
+    /// <summary>
+    /// Настройки с ровным графиком: одна и та же продолжительность все семь дней.
+    /// Тестам про учёт времени выходные только мешают.
+    /// </summary>
+    public static AppSettings Even(TimeSpan? hours = null) =>
+        AppSettings.Default with { Schedule = Flat(hours ?? Hm(8)) };
 
     /// <summary>Поправка к классификации отлучки, начавшейся в указанный момент.</summary>
     public static BreakAdjustment Paid(int hour, int minute = 0) =>

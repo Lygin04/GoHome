@@ -32,32 +32,85 @@ public sealed class GoHomeService
     private const int StaleDayLookback = 14;
 
     private readonly DayLogStore _store;
+    private readonly SettingsStore _settings;
 
     /// <summary>Когда метки живучести в последний раз доходили до файла.</summary>
     private DateTimeOffset? _heartbeatAt;
 
-    public GoHomeService(DayLogStore store, TimeSpan? goal = null, LunchRules? lunch = null)
+    public GoHomeService(DayLogStore store, SettingsStore settings)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(settings);
         _store = store;
-        Goal = goal ?? WorkTimeCalculator.DefaultGoal;
-        Lunch = lunch ?? LunchRules.Default;
+        _settings = settings;
     }
 
-    /// <summary>Норма рабочего дня.</summary>
-    public TimeSpan Goal { get; }
-
-    /// <summary>Когда отлучка может оказаться обедом.</summary>
-    public LunchRules Lunch { get; }
+    /// <summary>Действующие настройки.</summary>
+    public AppSettings Settings => _settings.Current;
 
     /// <summary>Каталог с журналами.</summary>
     public string DataRoot => _store.Root;
 
+    /// <summary>Файл настроек.</summary>
+    public string SettingsPath => _settings.Path;
+
     /// <summary>Расчёт текущего дня.</summary>
     public DaySummary Summarize(DateTimeOffset now) => Compute(_store.Load(WorkDay.DateOf(now)), now);
 
+    /// <summary>
+    /// Расчёт дня. Нынешние настройки идут только в дни без собственного снимка:
+    /// у начатого дня правила и цель свои, и менять их задним числом нельзя.
+    /// </summary>
     private DaySummary Compute(DayLog log, DateTimeOffset now) =>
-        WorkTimeCalculator.Compute(log, now, Goal, Lunch);
+        WorkTimeCalculator.Compute(log, now, Settings.RulesFor(log.Date));
+
+    /// <summary>Сохраняет настройки и подтягивает сегодняшнюю цель.</summary>
+    /// <returns><c>true</c>, если настройки легли на диск.</returns>
+    public bool SaveSettings(AppSettings settings, DateTimeOffset now)
+    {
+        var saved = _settings.Save(settings);
+        RefreshGoal(WorkDay.DateOf(now));
+        return saved;
+    }
+
+    /// <summary>Перечитывает файл настроек — его могли поправить руками.</summary>
+    public AppSettings ReloadSettings() => _settings.Reload();
+
+    /// <summary>Забирает право один раз сказать человеку о проблеме с файлом настроек.</summary>
+    public StorageAlert? TryTakeSettingsAlert() => _settings.TryTakeAlert();
+
+    /// <summary>
+    /// Подтягивает цель дня из настроек в его снимок.
+    /// </summary>
+    /// <remarks>
+    /// Правила расчёта при этом не трогаются: они действуют со следующего дня. Иначе смена
+    /// обеденного окна в два часа дня означала бы, что засчитанный утром обед перестал быть
+    /// обедом, — и день оказался бы посчитан двумя способами. Цель так не работает: она
+    /// только сравнивается с итогом, и поправить её сегодняшним числом можно безопасно.
+    /// </remarks>
+    /// <returns><c>true</c>, если снимок дня изменился.</returns>
+    public bool RefreshGoal(DateOnly date)
+    {
+        var goal = Settings.GoalFor(date);
+
+        return _store.TryUpdate(date, log =>
+        {
+            if (log.Punches.Count == 0)
+            {
+                // Дня ещё нет — снимок поставится при создании, уже с новой целью.
+                return false;
+            }
+
+            var rules = DayRules.Of(log, Settings.RulesFor(date));
+            if (rules.Goal == goal)
+            {
+                return false;
+            }
+
+            log.Rules = rules with { Goal = goal };
+            return true;
+        });
+    }
 
     /// <summary>Путь к файлу дня, которому принадлежит момент.</summary>
     public string DayFilePath(DateTimeOffset now) => _store.PathFor(WorkDay.DateOf(now));
@@ -70,7 +123,15 @@ public sealed class GoHomeService
     {
         var today = WorkDay.DateOf(now);
         var logs = _store.LoadRange(today.AddDays(-(days - 1)), today);
-        return HistoryCalculator.Recent(logs, now, days, Goal, Lunch);
+        return HistoryCalculator.Recent(logs, now, days, Settings);
+    }
+
+    /// <summary>Итог недели, которой принадлежит момент. Только для показа.</summary>
+    public WeekSummary Week(DateTimeOffset now)
+    {
+        var start = HistoryCalculator.WeekStart(WorkDay.DateOf(now));
+        var logs = _store.LoadRange(start, start.AddDays(6));
+        return HistoryCalculator.Week(logs, now, Settings);
     }
 
     /// <summary>
@@ -393,14 +454,14 @@ public sealed class GoHomeService
     }
 
     /// <summary>
-    /// Дописывает отметку. Версия правил проставляется при создании дня и дальше не меняется:
-    /// обновление посреди дня не должно посчитать его половины по-разному.
+    /// Дописывает отметку. Снимок правил и цели проставляется при создании дня и дальше
+    /// живёт вместе с ним: обновление посреди дня не должно посчитать его половины по-разному.
     /// </summary>
-    private static void Append(DayLog log, Punch punch)
+    private void Append(DayLog log, Punch punch)
     {
         if (log.Punches.Count == 0)
         {
-            log.RulesVersion ??= Core.RulesVersion.Current;
+            log.Rules ??= Settings.RulesFor(log.Date);
         }
 
         log.Punches.Add(punch);

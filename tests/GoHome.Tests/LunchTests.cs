@@ -209,10 +209,10 @@ public class LunchTests
     [Fact]
     public void Обеденное_окно_берётся_из_правил()
     {
-        var log = Fresh(In(9), BreakStart(10), BreakEnd(10, 45));
         var rules = LunchRules.Default with { WindowStart = new TimeOnly(9, 30), WindowEnd = new TimeOnly(11, 0) };
+        var log = Fresh(In(9), BreakStart(10), BreakEnd(10, 45)).By(DayRules.Default with { Lunch = rules });
 
-        var summary = WorkTimeCalculator.Compute(log, At(18), WorkTimeCalculator.DefaultGoal, rules);
+        var summary = WorkTimeCalculator.Compute(log, At(18));
 
         Assert.Equal(At(10), summary.GuessedLunch?.Start);
     }
