@@ -24,6 +24,11 @@
         <EmbeddedResource Include="Resources\gohome.ico" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- Тестам нужны паузы между попытками записи: с боевыми они ждали бы секундами. -->
+        <InternalsVisibleTo Include="GoHome.Tests" />
+    </ItemGroup>
+
     <PropertyGroup>
         <!-- Ставится на корпоративную машину без прав на установку рантайма. -->
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -33,6 +38,9 @@
         <!-- WinForms не поддерживает тримминг: предупреждения сборки и падения на рефлексии. -->
         <PublishTrimmed>false</PublishTrimmed>
         <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <!-- Символы внутрь exe, а не отдельным .pdb: пользователь присылает один файл журнала
+             ошибок, и в трассировке видны файл и строка. Расплата — пути сборочной машины
+             в стеке; это осознанно. Убрать их, сохранив номера строк, можно через PathMap. -->
         <DebugType>embedded</DebugType>
     </PropertyGroup>
 
