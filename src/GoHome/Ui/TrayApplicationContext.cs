@@ -2,7 +2,9 @@ using System.Diagnostics;
 using Microsoft.Win32;
 using GoHome.App;
 using GoHome.Core;
+using GoHome.Diagnostics;
 using GoHome.Interop;
+using GoHome.Storage;
 
 namespace GoHome.Ui;
 
@@ -88,7 +90,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _autostartItem,
             exitItem,
         ]);
-        menu.Opening += (_, _) => UpdateMenu(_clock());
+        menu.Opening += (_, _) => Guard("открытие меню", () => UpdateMenu(_clock()));
 
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.DoubleClick += (_, _) => ShowHistory();
@@ -101,16 +103,20 @@ public sealed class TrayApplicationContext : ApplicationContext
         var now = _clock();
         _day = WorkDay.DateOf(now);
 
-        _service.CloseStaleDays(now);
-        if (!WorkstationState.IsLocked())
+        Guard("запуск", () =>
         {
-            // Приход пишется только при разблокированном экране. После ночного обновления
-            // корпоративная Windows логинится в сессию сама и блокирует её (ARSO), поэтому
-            // ни факт запуска, ни событие логона приходом считать нельзя.
-            _service.RecordReturn(now, "startup");
-        }
+            _service.CloseStaleDays(now);
+            if (!WorkstationState.IsLocked())
+            {
+                // Приход пишется только при разблокированном экране. После ночного обновления
+                // корпоративная Windows логинится в сессию сама и блокирует её (ARSO), поэтому
+                // ни факт запуска, ни событие логона приходом считать нельзя.
+                _service.RecordReturn(now, "startup");
+            }
 
-        Refresh(now);
+            Refresh(now);
+        });
+
         _notifyIcon.Visible = true;
 
         // Таймер именно UI-потоковый: NotifyIcon с чужого потока трогать нельзя.
@@ -124,7 +130,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
     }
 
-    private void OnTick()
+    private void OnTick() => Guard("тик таймера", () =>
     {
         var now = _clock();
         var idle = UserActivity.GetIdleTime();
@@ -139,29 +145,65 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var summary = Refresh(now);
 
+        if (_service.TryTakeStorageAlert() is { } alert)
+        {
+            // Подсказка, а не модальное окно: учёт продолжается, а человек чинит файл,
+            // когда ему удобно. Остальные уведомления подождут следующего тика — своё
+            // право показаться они ещё не забирали.
+            ShowBalloon(Describe(alert), ToolTipIcon.Warning);
+            return;
+        }
+
         // Про обед сообщаем первым: он меняет счётчик, и уведомление про норму
         // должно исходить уже из поправленного времени.
         if (_service.TryTakeLunchNotification(now) is { } lunch)
         {
-            _pendingLunchCancel = true;
-            _notifyIcon.ShowBalloonTip(
-                BalloonTimeoutMs,
-                "GoHome",
+            ShowBalloon(
                 $"Перерыв {WorkTimeFormat.Interval(lunch)} засчитан обедом и не идёт в рабочее время. "
-                    + "Щёлкните здесь, если это был не обед.",
-                ToolTipIcon.Info);
+                    + "Щёлкните здесь, если это был не обед.");
 
+            _pendingLunchCancel = true;
             summary = Refresh(now);
         }
 
         if (_service.TryTakeGoalNotification(now))
         {
-            _pendingLunchCancel = false;
-            _notifyIcon.ShowBalloonTip(
-                BalloonTimeoutMs,
-                "GoHome",
-                $"Норма отработана: {WorkTimeFormat.Duration(summary.Worked)}. Можно домой.",
-                ToolTipIcon.Info);
+            ShowBalloon($"Норма отработана: {WorkTimeFormat.Duration(summary.Worked)}. Можно домой.");
+        }
+    });
+
+    /// <summary>Что сказать человеку про заупрямившийся файл, чтобы он понял, куда смотреть.</summary>
+    private static string Describe(StorageAlert alert) => alert.Kind switch
+    {
+        StorageAlertKind.FileUnreadable =>
+            $"Файл дня не разбирается, поэтому не перезаписывается: {alert.Path}. "
+                + "Учёт продолжается, но день показан пустым — поправьте синтаксис JSON.",
+        _ =>
+            $"Не удаётся сохранить файл дня: {alert.Path}. Возможно, он занят другой программой. "
+                + "Время считается дальше и запишется, как только файл освободится.",
+    };
+
+    /// <summary>Показывает подсказку. Любая чужая перебивает обеденную: щелчок по ней ничего не отменяет.</summary>
+    private void ShowBalloon(string text, ToolTipIcon icon = ToolTipIcon.Info)
+    {
+        _pendingLunchCancel = false;
+        _notifyIcon.ShowBalloonTip(BalloonTimeoutMs, "GoHome", text, icon);
+    }
+
+    /// <summary>
+    /// Последний рубеж вокруг обработчика. Фоновому приложению, которое должно тихо
+    /// проработать весь день, аварийное окно обходится дороже потерянной минуты учёта,
+    /// поэтому наружу отсюда не выходит ничего.
+    /// </summary>
+    private static void Guard(string what, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Default.Write($"сбой в обработчике «{what}»", ex);
         }
     }
 
@@ -299,13 +341,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         var result = Autostart.IsEnabled() ? Autostart.Disable() : Autostart.Enable();
         if (!result.Success)
         {
-            // Чужая подсказка перебивает обеденную: щелчок по ней ничего отменять не должен.
-            _pendingLunchCancel = false;
-            _notifyIcon.ShowBalloonTip(
-                BalloonTimeoutMs,
-                "GoHome",
-                "Не удалось изменить автозапуск. " + result.Output,
-                ToolTipIcon.Warning);
+            ShowBalloon("Не удалось изменить автозапуск. " + result.Output, ToolTipIcon.Warning);
         }
 
         _autostartItem.Checked = Autostart.IsEnabled();
@@ -314,10 +350,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void ExitApplication()
     {
         _timer.Stop();
+
+        // Выход — последняя возможность досказать на диск накопленное за день.
+        Guard("выход", () => _service.FlushHeartbeat(_clock(), UserActivity.GetIdleTime()));
+
         ExitThread();
     }
 
-    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e) => Guard("событие сессии", () =>
     {
         // Событие приходит на своём потоке; файл дня защищён локом внутри хранилища.
         var now = _clock();
@@ -343,13 +383,18 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         PostRefresh();
-    }
+    });
 
-    private void OnSessionEnding(object? sender, SessionEndingEventArgs e)
+    private void OnSessionEnding(object? sender, SessionEndingEventArgs e) => Guard("завершение сессии", () =>
     {
-        // Штатное завершение системы. Запись синхронная, до диска — второго шанса не будет.
-        _service.RecordPause(_clock(), UserActivity.GetIdleTime(), "shutdown");
-    }
+        // Штатное завершение системы. Запись синхронная, до диска — второго шанса не будет,
+        // поэтому метки живучести сбрасываются здесь независимо от их обычного расписания.
+        var now = _clock();
+        var idle = UserActivity.GetIdleTime();
+
+        _service.RecordPause(now, idle, "shutdown");
+        _service.FlushHeartbeat(now, idle);
+    });
 
     private void OnAppearanceChanged(object? sender, EventArgs e) => PostRedraw();
 

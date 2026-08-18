@@ -1,4 +1,5 @@
 using GoHome.App;
+using GoHome.Diagnostics;
 using GoHome.Storage;
 using GoHome.Ui;
 
@@ -32,9 +33,28 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         Application.SetColorMode(SystemColorMode.System);
+        CatchEverything();
 
         using var context = new TrayApplicationContext(new GoHomeService(new DayLogStore()));
         Application.Run(context);
         return 0;
+    }
+
+    /// <summary>
+    /// Последний рубеж: необработанное исключение не показывает модальное окно и не
+    /// останавливает учёт, а уходит в журнал ошибок. Основное средство — не это, а то,
+    /// что операции с файлами не выпускают исключений наружу; сюда доходит лишь то,
+    /// чего никто не предвидел.
+    /// </summary>
+    private static void CatchEverything()
+    {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+
+        Application.ThreadException += (_, e) =>
+            ErrorLog.Default.Write("необработанное исключение UI-потока", e.Exception);
+
+        // Из фонового потока приложение уже не спасти — но причина должна остаться записанной.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            ErrorLog.Default.Write("необработанное исключение вне UI-потока", e.ExceptionObject as Exception);
     }
 }
