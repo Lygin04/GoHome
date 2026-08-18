@@ -19,10 +19,22 @@ public sealed class GoHomeService
     /// <summary>Насколько свежей должна быть активность, чтобы считать человека присутствующим.</summary>
     private static readonly TimeSpan PresenceWindow = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Как часто метки живучести доходят до диска. Заметно реже тика: раз в минуту
+    /// переписывать файл дня целиком — это около пятисот перезаписей за рабочий день,
+    /// и каждая даёт антивирусу, индексатору и открытому проводнику повод вмешаться.
+    /// Точность восстановления после внезапного выключения падает на единицы минут,
+    /// и это дешевле, чем сбой записи.
+    /// </summary>
+    public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
+
     /// <summary>Сколько дней назад имеет смысл искать незакрытые дни на старте.</summary>
     private const int StaleDayLookback = 14;
 
     private readonly DayLogStore _store;
+
+    /// <summary>Когда метки живучести в последний раз доходили до файла.</summary>
+    private DateTimeOffset? _heartbeatAt;
 
     public GoHomeService(DayLogStore store, TimeSpan? goal = null, LunchRules? lunch = null)
     {
@@ -108,8 +120,9 @@ public sealed class GoHomeService
     /// Отметка возврата: разблокировка, подключение RDP, ручное продолжение, старт приложения
     /// при незаблокированном экране. Первое событие дня расчёт сам трактует как приход.
     /// </summary>
-    public bool RecordReturn(DateTimeOffset now, string source) =>
-        _store.TryUpdate(WorkDay.DateOf(now), log =>
+    public bool RecordReturn(DateTimeOffset now, string source)
+    {
+        var recorded = _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
             if (Compute(log, now).State == WorkState.Working)
             {
@@ -118,16 +131,27 @@ public sealed class GoHomeService
             }
 
             Append(log, new Punch(NotBeforeLastPunch(log, now).ToWholeSecond(), PunchKind.BreakEnd, source));
+            // Человек здесь прямо сейчас — заодно и метки живучести свежие.
+            Stamp(log, now, now);
             return true;
         });
+
+        if (recorded)
+        {
+            _heartbeatAt = now;
+        }
+
+        return recorded;
+    }
 
     /// <summary>
     /// Отметка паузы: блокировка, логофф, отключение RDP, завершение системы, ручная пауза.
     /// Метка сдвигается назад на фактический простой — иначе минуты до автолока
     /// по доменной политике попадут в рабочее время.
     /// </summary>
-    public bool RecordPause(DateTimeOffset now, TimeSpan idle, string source) =>
-        _store.TryUpdate(WorkDay.DateOf(now), log =>
+    public bool RecordPause(DateTimeOffset now, TimeSpan idle, string source)
+    {
+        var recorded = _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
             if (Compute(log, now).State != WorkState.Working)
             {
@@ -141,15 +165,49 @@ public sealed class GoHomeService
             }
 
             Append(log, new Punch(NotBeforeLastPunch(log, at).ToWholeSecond(), PunchKind.BreakStart, source));
+            Stamp(log, now, ActiveAt(now, idle));
             return true;
         });
+
+        if (recorded)
+        {
+            _heartbeatAt = now;
+        }
+
+        // Пауза — точка, после которой машина может и не проснуться: дни, зависшие
+        // в памяти после неудачных записей, досылаются именно здесь.
+        _store.Flush();
+        return recorded;
+    }
 
     /// <summary>
     /// Метки живучести: время тика и время последней активности пользователя.
     /// Вторая нужна, чтобы закрыть день по-человечески, если машина умрёт с открытым интервалом.
+    /// Доходят до файла не каждый тик, а раз в <see cref="HeartbeatInterval"/>.
     /// </summary>
-    public void Heartbeat(DateTimeOffset now, TimeSpan idle) =>
-        _store.TryUpdate(WorkDay.DateOf(now), log =>
+    public void Heartbeat(DateTimeOffset now, TimeSpan idle) => Heartbeat(now, idle, force: false);
+
+    /// <summary>
+    /// Метки живучести немедленно, вместе со всем, что зависло после неудачных записей.
+    /// Зовётся там, где второго шанса не будет: завершение сессии и выход.
+    /// </summary>
+    public void FlushHeartbeat(DateTimeOffset now, TimeSpan idle) => Heartbeat(now, idle, force: true);
+
+    private void Heartbeat(DateTimeOffset now, TimeSpan idle, bool force)
+    {
+        // Часы могли уехать назад (перевод времени, синхронизация) — тогда пишем сразу,
+        // иначе метки замерли бы до тех пор, пока «сейчас» снова не догонит прошлое.
+        var due = force
+            || _heartbeatAt is not { } last
+            || now - last >= HeartbeatInterval
+            || now < last;
+
+        if (!due)
+        {
+            return;
+        }
+
+        var stamped = _store.TryUpdate(WorkDay.DateOf(now), log =>
         {
             if (log.Punches.Count == 0)
             {
@@ -157,15 +215,20 @@ public sealed class GoHomeService
                 return false;
             }
 
-            var activeAt = now - (idle > TimeSpan.Zero ? idle : TimeSpan.Zero);
-            log.LastHeartbeat = now.ToWholeSecond();
-            if (log.LastUserActivity is not { } known || activeAt > known)
-            {
-                log.LastUserActivity = activeAt.ToWholeSecond();
-            }
-
+            Stamp(log, now, ActiveAt(now, idle));
             return true;
         });
+
+        if (stamped)
+        {
+            _heartbeatAt = now;
+        }
+
+        _store.Flush();
+    }
+
+    /// <summary>Забирает право один раз сказать человеку о проблеме с файлами.</summary>
+    public StorageAlert? TryTakeStorageAlert() => _store.TryTakeAlert();
 
     /// <summary>
     /// Дописывает уход в прошлые дни, оставшиеся с открытым интервалом.
@@ -342,6 +405,22 @@ public sealed class GoHomeService
 
         log.Punches.Add(punch);
     }
+
+    /// <summary>
+    /// Проставляет метки живучести. Известная активность назад не уезжает: минуты простоя
+    /// перед автоблокировкой не должны стереть более свежее уже записанное значение.
+    /// </summary>
+    private static void Stamp(DayLog log, DateTimeOffset now, DateTimeOffset activeAt)
+    {
+        log.LastHeartbeat = now.ToWholeSecond();
+        if (log.LastUserActivity is not { } known || activeAt > known)
+        {
+            log.LastUserActivity = activeAt.ToWholeSecond();
+        }
+    }
+
+    private static DateTimeOffset ActiveAt(DateTimeOffset now, TimeSpan idle) =>
+        now - (idle > TimeSpan.Zero ? idle : TimeSpan.Zero);
 
     private static Punch? LastPunch(DayLog log) =>
         log.Punches.Count == 0 ? null : log.Punches.MaxBy(punch => punch.At);
