@@ -207,7 +207,7 @@ public sealed class DayLogStoreTests : IDisposable
     public async Task Освободившийся_со_второй_попытки_файл_записывается()
     {
         var store = Store;
-        store.WriteBackoff = [TimeSpan.FromMilliseconds(300)];
+        store.WriteBackoff = JsonFile.DefaultWriteBackoff;
         store.Save(new DayLog { Date = Today, Punches = [In(9)] });
 
         var held = Hold(store.PathFor(Today));
@@ -217,7 +217,7 @@ public sealed class DayLogStoreTests : IDisposable
             held.Dispose();
         });
 
-        // Первая попытка натыкается на занятый файл, вторая — уже на свободный.
+        // Первая попытка натыкается на занятый файл, одна из следующих — уже на свободный.
         var saved = store.Save(new DayLog { Date = Today, Punches = [In(9), Out(18)] });
         await release;
 
