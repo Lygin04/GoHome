@@ -74,7 +74,52 @@ public static class SettingsCheck
             problems.AddRange(LunchProblems(settings.Lunch));
         }
 
+        problems.AddRange(WarningProblems(settings.WarnBefore, ShortestGoal(settings.Schedule)));
+
         return problems;
+    }
+
+    /// <summary>
+    /// Что не так с предупреждением о скорой норме.
+    /// </summary>
+    /// <remarks>
+    /// Проверяется связка с графиком: сами по себе любые полчаса осмысленны, а полчаса
+    /// при получасовом дне означают предупреждение раньше, чем день начался. Исключения
+    /// по датам в проверку не входят: разовый короткий день не повод запрещать настройку,
+    /// в такой день предупреждение просто придёт сразу.
+    /// </remarks>
+    private static IEnumerable<SettingsProblem> WarningProblems(TimeSpan warnBefore, TimeSpan? shortestGoal)
+    {
+        if (warnBefore < TimeSpan.Zero || warnBefore > MaxGoal)
+        {
+            yield return new SettingsProblem(
+                "уведомления",
+                $"Предупреждение должно быть не раньше чем за {MaxGoal.TotalHours:0} часов до нормы.");
+            yield break;
+        }
+
+        if (warnBefore > TimeSpan.Zero && shortestGoal is { } shortest && warnBefore > shortest)
+        {
+            yield return new SettingsProblem(
+                "уведомления",
+                $"Предупреждение за {WorkTimeFormat.Minutes(warnBefore)} длиннее самого короткого дня в графике "
+                    + $"({WorkTimeFormat.Duration(shortest)}) — оно обгонит саму норму. Сделайте его короче.");
+        }
+    }
+
+    /// <summary>Самый короткий рабочий день недельного графика. <c>null</c> — рабочих дней нет вовсе.</summary>
+    private static TimeSpan? ShortestGoal(WeekSchedule? schedule)
+    {
+        TimeSpan? shortest = null;
+        foreach (var day in WeekSchedule.Days)
+        {
+            if ((schedule ?? WeekSchedule.Default)[day] is { } hours && (shortest is null || hours < shortest))
+            {
+                shortest = hours;
+            }
+        }
+
+        return shortest;
     }
 
     /// <summary>Что не так с обеденными правилами.</summary>
@@ -168,6 +213,7 @@ public static class SettingsCheck
         exceptions.Sort((left, right) => left.Date.CompareTo(right.Date));
 
         var lunch = SanitizeLunch(settings.Lunch, notes);
+        var warnBefore = SanitizeWarning(settings.WarnBefore, ShortestGoal(schedule), notes);
 
         replaced = notes;
         return settings with
@@ -175,7 +221,35 @@ public static class SettingsCheck
             Schedule = schedule,
             Exceptions = exceptions,
             Lunch = lunch,
+            WarnBefore = warnBefore,
         };
+    }
+
+    /// <summary>
+    /// Приводит порог предупреждения к пригодному виду. Не влезающий в самый короткий день
+    /// заменяется значением по умолчанию, а если и оно не влезает — предупреждение выключается:
+    /// молча сдвинуть его на начало дня было бы хуже, чем не показывать вовсе.
+    /// </summary>
+    private static TimeSpan SanitizeWarning(TimeSpan warnBefore, TimeSpan? shortestGoal, List<string> notes)
+    {
+        var fallback = AppSettings.DefaultWarnBefore;
+
+        if (warnBefore < TimeSpan.Zero || warnBefore > MaxGoal)
+        {
+            notes.Add($"уведомления: предупреждение {warnBefore} заменено на {fallback}");
+            warnBefore = fallback;
+        }
+
+        if (warnBefore > TimeSpan.Zero && shortestGoal is { } shortest && warnBefore > shortest)
+        {
+            var replacement = fallback <= shortest ? fallback : TimeSpan.Zero;
+            notes.Add(
+                $"уведомления: предупреждение {warnBefore} длиннее самого короткого дня {shortest}, "
+                    + $"заменено на {replacement}");
+            warnBefore = replacement;
+        }
+
+        return warnBefore;
     }
 
     private static LunchRules SanitizeLunch(LunchRules? lunch, List<string> notes)

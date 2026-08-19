@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace GoHome.Core;
 
 /// <summary>
@@ -13,13 +15,20 @@ namespace GoHome.Core;
 /// они ложатся снимком в файл дня при его создании — см. <see cref="DayRules"/>.
 /// </item>
 /// <item>
-/// <b>Предпочтения</b> (<see cref="Theme"/>) определяют, что показывается. Историю
-/// не затрагивают и применяются немедленно.
+/// <b>Предпочтения</b> (<see cref="Theme"/>, <see cref="WarnBefore"/>) определяют,
+/// что показывается. Историю не затрагивают и применяются немедленно.
 /// </item>
 /// </list>
 /// </remarks>
 public sealed record AppSettings
 {
+    /// <summary>
+    /// За сколько до нормы предупреждать по умолчанию. Четверти часа хватает, чтобы
+    /// свернуть дела, и не настолько много, чтобы предупреждение забылось.
+    /// </summary>
+    /// <remarks>Объявлено выше <see cref="Default"/>: статические поля считаются по порядку.</remarks>
+    public static readonly TimeSpan DefaultWarnBefore = TimeSpan.FromMinutes(15);
+
     /// <summary>Значения по умолчанию.</summary>
     public static readonly AppSettings Default = new();
 
@@ -39,6 +48,19 @@ public sealed record AppSettings
     public AppTheme Theme { get; init; } = AppTheme.System;
 
     /// <summary>
+    /// За сколько до нормы предупредить. Ноль — не предупреждать.
+    /// </summary>
+    /// <remarks>
+    /// Предпочтение, а не правило: в снимок дня не ложится и действует немедленно —
+    /// от него зависит только момент уведомления, но не отработанное время.
+    /// </remarks>
+    public TimeSpan WarnBefore { get; init; } = DefaultWarnBefore;
+
+    /// <summary>Предупреждение включено.</summary>
+    [JsonIgnore]
+    public bool WarnsBeforeGoal => WarnBefore > TimeSpan.Zero;
+
+    /// <summary>
     /// Сравнение по значению, включая список исключений.
     /// </summary>
     /// <remarks>
@@ -51,6 +73,7 @@ public sealed record AppSettings
         && Lunch == other.Lunch
         && Schedule == other.Schedule
         && Theme == other.Theme
+        && WarnBefore == other.WarnBefore
         && Exceptions.SequenceEqual(other.Exceptions);
 
     /// <inheritdoc/>
@@ -61,6 +84,7 @@ public sealed record AppSettings
         hash.Add(Lunch);
         hash.Add(Schedule);
         hash.Add(Theme);
+        hash.Add(WarnBefore);
         foreach (var exception in Exceptions)
         {
             hash.Add(exception);
