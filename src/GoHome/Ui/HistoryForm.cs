@@ -4,7 +4,15 @@ using GoHome.Core;
 
 namespace GoHome.Ui;
 
-/// <summary>История за неделю. Собирается кодом — дизайнер здесь ничего не добавляет.</summary>
+/// <summary>
+/// История за неделю и статистика за период. Собирается кодом — дизайнер здесь
+/// ничего не добавляет.
+/// </summary>
+/// <remarks>
+/// Два взгляда на одни и те же файлы дней, поэтому одно окно с вкладками, а не два:
+/// в историю заходят починить вчерашний день, в статистику — посмотреть, как шёл месяц,
+/// и переключаться между этим приходится постоянно.
+/// </remarks>
 public sealed class HistoryForm : Form
 {
     private static readonly CultureInfo Russian = CultureInfo.GetCultureInfo("ru-RU");
@@ -18,6 +26,7 @@ public sealed class HistoryForm : Form
     private readonly Button _markDay;
     private readonly Button _clearDay;
     private readonly Label _total;
+    private readonly StatsPanel _stats;
 
     /// <summary>Списки перестраиваются кодом, и выбор при этом меняется сам — это не правка человека.</summary>
     private bool _filling;
@@ -30,10 +39,10 @@ public sealed class HistoryForm : Form
         _service = service;
         _clock = clock;
 
-        Text = "GoHome — история за неделю";
+        Text = "GoHome — история и статистика";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(720, 500);
-        ClientSize = new Size(800, 560);
+        MinimumSize = new Size(760, 560);
+        ClientSize = new Size(880, 620);
         Icon = AppIcon.ForWindows;
         ShowIcon = Icon is not null;
         MinimizeBox = false;
@@ -142,10 +151,22 @@ public sealed class HistoryForm : Form
             TextAlign = ContentAlignment.MiddleLeft,
         };
 
-        Controls.Add(_days);
-        Controls.Add(dayActions);
-        Controls.Add(breaks);
-        Controls.Add(_total);
+        var historyPage = new TabPage("История за неделю") { UseVisualStyleBackColor = true };
+        historyPage.Controls.Add(_days);
+        historyPage.Controls.Add(dayActions);
+        historyPage.Controls.Add(breaks);
+        historyPage.Controls.Add(_total);
+
+        _stats = new StatsPanel(_service, _clock) { Dock = DockStyle.Fill };
+
+        var statsPage = new TabPage("Статистика") { UseVisualStyleBackColor = true };
+        statsPage.Controls.Add(_stats);
+
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(historyPage);
+        tabs.TabPages.Add(statsPage);
+
+        Controls.Add(tabs);
 
         Reload();
     }
@@ -218,6 +239,10 @@ public sealed class HistoryForm : Form
         _total.Text = total;
         ShowIntervals(keepInterval);
         UpdateDayActions();
+
+        // Статистика читает те же файлы: сегодняшний день дописывается прямо сейчас,
+        // а прошлые периоды перечитывать незачем — они уже прочитаны.
+        _stats.Reload();
     }
 
     /// <summary>Перерывы выбранного дня.</summary>

@@ -69,7 +69,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         var journalItem = new ToolStripMenuItem("Открыть журнал дня");
         journalItem.Click += (_, _) => OpenDayJournal();
 
-        var historyItem = new ToolStripMenuItem("История за неделю…");
+        var historyItem = new ToolStripMenuItem("История и статистика…");
         historyItem.Click += (_, _) => ShowHistory();
 
         var settingsItem = new ToolStripMenuItem("Настройки…");
