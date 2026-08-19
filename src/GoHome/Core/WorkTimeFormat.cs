@@ -15,6 +15,13 @@ public static class WorkTimeFormat
     public static string SignedDuration(TimeSpan value) =>
         value > TimeSpan.Zero ? "+" + Duration(value) : Duration(value);
 
+    /// <summary>Время суток как <c>09:12</c> — из длительности от полуночи.</summary>
+    public static string TimeOfDay(TimeSpan value)
+    {
+        var abs = value.Duration();
+        return $"{(int)abs.TotalHours % 24:00}:{abs.Minutes:00}";
+    }
+
     /// <summary>Время суток как <c>09:12</c>, либо прочерк.</summary>
     public static string Clock(DateTimeOffset? value) =>
         value is { } v ? v.ToLocalTime().ToString("HH:mm") : "—";
