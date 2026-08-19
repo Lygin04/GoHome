@@ -171,9 +171,19 @@ public sealed class TrayApplicationContext : ApplicationContext
             summary = Refresh(now);
         }
 
+        // Предупреждение спрашивается раньше нормы, но само уступает ей: если пересчёт
+        // перебросил счётчик через оба порога разом, право сказать остаётся у нормы.
+        var warning = _service.TryTakeWarningNotification(now);
+
         if (_service.TryTakeGoalNotification(now))
         {
             ShowBalloon($"Норма отработана: {WorkTimeFormat.Duration(summary.Worked)}. Можно домой.");
+            return;
+        }
+
+        if (warning is { } left)
+        {
+            ShowBalloon($"До нормы {WorkTimeFormat.Minutes(left)} — пора сворачивать дела.");
         }
     });
 

@@ -6,8 +6,8 @@ using GoHome.Core;
 namespace GoHome.Ui;
 
 /// <summary>
-/// Настройки: учёт времени, график, оформление. Собирается кодом — дизайнер здесь
-/// ничего не добавляет, как и в окне истории.
+/// Настройки: учёт времени, график, уведомления, оформление. Собирается кодом — дизайнер
+/// здесь ничего не добавляет, как и в окне истории.
 /// </summary>
 /// <remarks>
 /// Настроек много, поэтому они разложены по вкладкам, а не свалены в одно полотно.
@@ -34,6 +34,9 @@ public sealed class SettingsForm : Form
     private readonly ListView _exceptions;
     private readonly Button _editException;
     private readonly Button _removeException;
+
+    private readonly CheckBox _warnEnabled;
+    private readonly DurationBox _warnBefore;
 
     private readonly ComboBox _theme;
     private readonly Label _problems;
@@ -103,6 +106,15 @@ public sealed class SettingsForm : Form
         _removeException = new Button { Text = "Удалить", Width = 110, Enabled = false };
         _exceptions.SelectedIndexChanged += (_, _) => UpdateExceptionButtons();
 
+        _warnEnabled = new CheckBox
+        {
+            Text = "Предупреждать, что норма скоро",
+            Dock = DockStyle.Top,
+            Height = 30,
+        };
+
+        _warnBefore = new DurationBox();
+
         _theme = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
         _theme.Items.AddRange(["Как в системе", "Светлая", "Тёмная"]);
 
@@ -119,6 +131,7 @@ public sealed class SettingsForm : Form
         var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(12, 6) };
         tabs.TabPages.Add(AccountingPage());
         tabs.TabPages.Add(SchedulePage());
+        tabs.TabPages.Add(NotificationsPage());
         tabs.TabPages.Add(AppearancePage());
 
         Controls.Add(tabs);
@@ -264,6 +277,45 @@ public sealed class SettingsForm : Form
         return page;
     }
 
+    private TabPage NotificationsPage()
+    {
+        var page = new TabPage("Уведомления") { Padding = new Padding(12), UseVisualStyleBackColor = true };
+
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            Height = 44,
+        };
+
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.Controls.Add(Caption("За сколько до нормы"), 0, 0);
+        layout.Controls.Add(_warnBefore, 1, 0);
+
+        var note = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 120,
+            ForeColor = SystemColors.GrayText,
+            Text = "Смысл предупреждения в том, чтобы успеть свернуть дела, а не узнать постфактум."
+                + Environment.NewLine
+                + "Приходит один раз за день. В нерабочий день не приходит — нормы у него нет. "
+                + "Во время паузы не возникает: в паузе отработанное не растёт."
+                + Environment.NewLine
+                + "Если пересчёт перебросил счётчик сразу через оба порога, придёт только уведомление "
+                + "о норме: два подряд про одно и то же выглядят сломанными."
+                + Environment.NewLine
+                + "Применяется сразу, как и тема окон.",
+        };
+
+        page.Controls.Add(note);
+        page.Controls.Add(layout);
+        page.Controls.Add(_warnEnabled);
+
+        return page;
+    }
+
     private TabPage AppearancePage()
     {
         var page = new TabPage("Оформление") { Padding = new Padding(12), UseVisualStyleBackColor = true };
@@ -363,12 +415,17 @@ public sealed class SettingsForm : Form
         }
 
         _draftExceptions = [.. settings.Exceptions];
+
+        _warnEnabled.Checked = settings.WarnsBeforeGoal;
+        _warnBefore.Value = settings.WarnsBeforeGoal ? settings.WarnBefore : AppSettings.DefaultWarnBefore;
+
         _theme.SelectedIndex = (int)settings.Theme;
 
         _filling = false;
 
         ShowExceptions();
         UpdateLunchEnabled();
+        UpdateWarningEnabled();
         Revalidate();
     }
 
@@ -391,6 +448,10 @@ public sealed class SettingsForm : Form
                 _lunchMinimum.Value),
             Schedule = schedule,
             Exceptions = _draftExceptions,
+
+            // Снятая галочка — это ноль, а не спрятанное значение: в файле настроек
+            // выключенное предупреждение должно выглядеть выключенным.
+            WarnBefore = _warnEnabled.Checked ? _warnBefore.Value : TimeSpan.Zero,
             Theme = (AppTheme)Math.Max(_theme.SelectedIndex, 0),
         };
     }
@@ -454,7 +515,18 @@ public sealed class SettingsForm : Form
         _breakMinimum.ValueChanged += (_, _) => Revalidate();
         _lunchMinimum.ValueChanged += (_, _) => Revalidate();
         _theme.SelectedIndexChanged += (_, _) => Revalidate();
+
+        _warnEnabled.CheckedChanged += (_, _) =>
+        {
+            UpdateWarningEnabled();
+            Revalidate();
+        };
+
+        _warnBefore.ValueChanged += (_, _) => Revalidate();
     }
+
+    /// <summary>Выключенное предупреждение не оставляет активным поле, которое ни на что не влияет.</summary>
+    private void UpdateWarningEnabled() => _warnBefore.Enabled = _warnEnabled.Checked;
 
     /// <summary>
     /// При выключенном зачёте настройки обеда недоступны: они не влияют ни на что,
