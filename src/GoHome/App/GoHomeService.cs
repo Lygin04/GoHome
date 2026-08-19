@@ -126,6 +126,16 @@ public sealed class GoHomeService
         return HistoryCalculator.Recent(logs, now, days, Settings);
     }
 
+    /// <summary>
+    /// Статистика за период. Только читает: ни один день от разглядывания не меняется.
+    /// </summary>
+    /// <remarks>
+    /// Год — это около двухсот пятидесяти файлов, поэтому звать это на каждой перерисовке
+    /// нельзя: читать нужно один раз при открытии периода, а результат держать.
+    /// </remarks>
+    public PeriodStats Stats(PeriodRange range, DateTimeOffset now) =>
+        StatsCalculator.For(_store.LoadRange(range.Start, range.End), now, Settings, range);
+
     /// <summary>Итог недели, которой принадлежит момент. Только для показа.</summary>
     public WeekSummary Week(DateTimeOffset now)
     {
