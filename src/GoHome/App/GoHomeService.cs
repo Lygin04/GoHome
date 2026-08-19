@@ -418,6 +418,84 @@ public sealed class GoHomeService
     }
 
     /// <summary>
+    /// Забирает право предупредить, что до нормы осталось немного.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Флаг живёт в файле дня, поэтому предупреждение приходит один раз за день даже после
+    /// перезапуска. Отодвинутая вверх цель снимает его так же, как снимает признак уведомления
+    /// о норме: до неё снова далеко, и предупредить о ней стоит заново.
+    /// </para>
+    /// <para>
+    /// Достигнутая норма забирает право себе: она сообщает то же самое и по существу. Оба
+    /// порога пересекаются разом не при обычном течении дня, а после пересчёта — пометил
+    /// отлучку обедом или снял пометку, — и два уведомления подряд в этот момент выглядят
+    /// сломанными. Признак при этом всё равно проставляется: предупреждать после того,
+    /// как о норме уже сказано, не о чем.
+    /// </para>
+    /// <para>
+    /// Во время паузы предупреждение не возникает само: в паузе отработанное не растёт,
+    /// поэтому порог пересекается только когда человек за клавиатурой.
+    /// </para>
+    /// </remarks>
+    /// <returns>Сколько осталось до нормы, либо <c>null</c>, если говорить не о чем.</returns>
+    public TimeSpan? TryTakeWarningNotification(DateTimeOffset now)
+    {
+        var warnBefore = Settings.WarnBefore;
+        TimeSpan? remaining = null;
+
+        _store.TryUpdate(WorkDay.DateOf(now), log =>
+        {
+            var summary = Compute(log, now);
+
+            // Выключено, день не начинался, день нерабочий — во всех трёх случаях предупреждать не о чем.
+            if (warnBefore <= TimeSpan.Zero || summary.State == WorkState.NotStarted || summary.IsDayOff)
+            {
+                return Forget(log);
+            }
+
+            if (summary.GoalReached)
+            {
+                if (log.WarningNotified)
+                {
+                    return false;
+                }
+
+                log.WarningNotified = true;
+                return true;
+            }
+
+            if (summary.Remaining > warnBefore)
+            {
+                return Forget(log);
+            }
+
+            if (log.WarningNotified)
+            {
+                return false;
+            }
+
+            log.WarningNotified = true;
+            remaining = summary.Remaining;
+            return true;
+        });
+
+        return remaining;
+    }
+
+    /// <summary>Снимает признак показанного предупреждения. Файл при этом трогается, только если было что снимать.</summary>
+    private static bool Forget(DayLog log)
+    {
+        if (!log.WarningNotified)
+        {
+            return false;
+        }
+
+        log.WarningNotified = false;
+        return true;
+    }
+
+    /// <summary>
     /// Забирает право сообщить об угаданном обеде. Отметка о показе привязана к началу
     /// интервала: если догадку отменили и она перешла на следующую отлучку, сообщить нужно снова.
     /// </summary>
