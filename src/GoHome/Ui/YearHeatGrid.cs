@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using GoHome.Core;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
@@ -22,7 +23,7 @@ internal sealed class YearHeatGrid : Control
     private readonly ToolTip _tip = new();
 
     private PeriodStats? _stats;
-    private ChartPalette _palette = ChartPalette.Current();
+    private Palette _palette = Palette.Current();
     private DateOnly? _hover;
 
     public YearHeatGrid()
@@ -38,12 +39,12 @@ internal sealed class YearHeatGrid : Control
     }
 
     /// <summary>Показывает год.</summary>
-    public void Display(PeriodStats stats, ChartPalette palette)
+    public void Display(PeriodStats stats, Palette palette)
     {
         _stats = stats;
         _palette = palette;
         _hover = null;
-        BackColor = palette.Surface;
+        BackColor = palette.Card;
         _tip.SetToolTip(this, string.Empty);
         Invalidate();
     }
@@ -54,7 +55,7 @@ internal sealed class YearHeatGrid : Control
 
         var graphics = e.Graphics;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(_palette.Surface);
+        graphics.Clear(_palette.Card);
 
         if (_stats is not { } stats || stats.Days.Count == 0 || Measure(stats) is not { } layout)
         {
@@ -183,14 +184,14 @@ internal sealed class YearHeatGrid : Control
     {
         if (day.Worked <= TimeSpan.Zero)
         {
-            return day.IsDayOff ? _palette.DayOff : _palette.Empty;
+            return day.IsDayOff ? _palette.Unpaid : _palette.HeatEmpty;
         }
 
         var share = day.Goal > TimeSpan.Zero
             ? Math.Clamp(day.Worked.TotalSeconds / day.Goal.TotalSeconds, 0d, 1d)
             : 1d;
 
-        return Blend(_palette.Empty, _palette.BarColor(day.IsDayOff, day.GoalReached), 0.25 + (0.75 * share));
+        return Blend(_palette.HeatEmpty, _palette.WorkColor(day.IsDayOff, day.GoalReached), 0.25 + (0.75 * share));
     }
 
     private Rectangle BoxOf(DateOnly date, Layouted layout)

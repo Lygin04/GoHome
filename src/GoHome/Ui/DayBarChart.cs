@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using GoHome.Core;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
@@ -24,7 +25,7 @@ internal sealed class DayBarChart : Control
     private readonly ToolTip _tip = new();
 
     private PeriodStats? _stats;
-    private ChartPalette _palette = ChartPalette.Current();
+    private Palette _palette = Palette.Current();
     private int _hover = -1;
 
     public DayBarChart()
@@ -40,12 +41,12 @@ internal sealed class DayBarChart : Control
     }
 
     /// <summary>Показывает период. Пустой период — это тоже период, и рисуется он молча.</summary>
-    public void Display(PeriodStats stats, ChartPalette palette)
+    public void Display(PeriodStats stats, Palette palette)
     {
         _stats = stats;
         _palette = palette;
         _hover = -1;
-        BackColor = palette.Surface;
+        BackColor = palette.Card;
         _tip.SetToolTip(this, string.Empty);
         Invalidate();
     }
@@ -56,7 +57,7 @@ internal sealed class DayBarChart : Control
 
         var graphics = e.Graphics;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(_palette.Surface);
+        graphics.Clear(_palette.Card);
 
         if (_stats is not { } stats || stats.Days.Count == 0)
         {
@@ -147,7 +148,7 @@ internal sealed class DayBarChart : Control
 
     private void DrawGrid(Graphics graphics, Rectangle plot, (int Hours, int Step) scale)
     {
-        using var pen = new Pen(_palette.Grid);
+        using var pen = new Pen(_palette.LineSoft);
 
         for (var hour = 0; hour <= scale.Hours; hour += scale.Step)
         {
@@ -179,7 +180,7 @@ internal sealed class DayBarChart : Control
             // и линия нормы к нему не относится — это должно быть видно и на пустом столбце.
             if (day.IsDayOff)
             {
-                using var back = new SolidBrush(_palette.Empty);
+                using var back = new SolidBrush(_palette.Track);
                 graphics.FillRectangle(back, left, plot.Top, width, plot.Height);
             }
 
@@ -188,7 +189,7 @@ internal sealed class DayBarChart : Control
                 var height = (int)Math.Round(plot.Height * day.Worked.TotalHours / scale.Hours);
                 if (height > 0)
                 {
-                    using var brush = new SolidBrush(_palette.BarColor(day.IsDayOff, day.GoalReached));
+                    using var brush = new SolidBrush(_palette.WorkColor(day.IsDayOff, day.GoalReached));
                     using var path = Rounded(new Rectangle(left, plot.Bottom - height, width, height), radius);
                     graphics.FillPath(brush, path);
                 }

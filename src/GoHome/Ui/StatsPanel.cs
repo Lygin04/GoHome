@@ -2,6 +2,7 @@ using System.Text;
 using GoHome.App;
 using GoHome.Core;
 using GoHome.Diagnostics;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
@@ -235,7 +236,7 @@ internal sealed class StatsPanel : UserControl
         _shown = stats;
         _export.Enabled = true;
 
-        var palette = ChartPalette.Current();
+        var palette = Palette.Current();
         if (stats.Range.Period == StatsPeriod.Year)
         {
             _grid.Display(stats, palette);

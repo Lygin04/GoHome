@@ -1,6 +1,7 @@
 using GoHome.App;
 using GoHome.Core;
 using GoHome.Ui;
+using GoHome.Ui.Design;
 using static GoHome.Tests.TestClock;
 
 namespace GoHome.Tests;
@@ -191,13 +192,13 @@ public sealed class FormsSmokeTests : IDisposable
 
     private static void Paint(DayBarChart chart, PeriodStats stats, Size? size = null)
     {
-        chart.Display(stats, ChartPalette.Current());
+        chart.Display(stats, Palette.Current());
         Render(chart, size);
     }
 
     private static void Paint(YearHeatGrid grid, PeriodStats stats, Size? size = null)
     {
-        grid.Display(stats, ChartPalette.Current());
+        grid.Display(stats, Palette.Current());
         Render(grid, size);
     }
 
