@@ -220,10 +220,10 @@ public sealed class PrimitivesTests
     public void TimeFieldParsesWhatPeopleType(string typed, int hour, int minute)
     {
         using var host = new Host();
-        var field = host.Add(new TimeField());
+        var field = host.Add(new DesignField { Kind = FieldKind.Time });
         field.Type(typed);
 
-        Assert.Equal(new TimeOnly(hour, minute), field.Value);
+        Assert.Equal(new TimeOnly(hour, minute), field.Time);
         Assert.True(field.IsValid);
     }
 
@@ -236,10 +236,10 @@ public sealed class PrimitivesTests
     public void TimeFieldRefusesNonsense(string typed)
     {
         using var host = new Host();
-        var field = host.Add(new TimeField());
+        var field = host.Add(new DesignField { Kind = FieldKind.Time });
         field.Type(typed);
 
-        Assert.Null(field.Value);
+        Assert.Null(field.Time);
         Assert.False(field.IsValid);
     }
 
@@ -251,12 +251,12 @@ public sealed class PrimitivesTests
     public void RejectedValueClearsWhenRetyped()
     {
         using var host = new Host();
-        var field = host.Add(new TimeField());
-        field.Value = new TimeOnly(12, 40);
+        var field = host.Add(new DesignField { Kind = FieldKind.Time });
+        field.Time = new TimeOnly(12, 40);
 
         field.Rejected = true;
         Assert.False(field.IsValid);
-        Assert.NotNull(field.Value);
+        Assert.NotNull(field.Time);
 
         field.Type("13:31");
         Assert.False(field.Rejected);
@@ -268,12 +268,12 @@ public sealed class PrimitivesTests
     public void FillingDoesNotLookLikeEditing()
     {
         using var host = new Host();
-        var field = host.Add(new TimeField());
+        var field = host.Add(new DesignField { Kind = FieldKind.Time });
 
         var edits = 0;
         field.ValueChanged += (_, _) => edits++;
 
-        field.Value = new TimeOnly(9, 12);
+        field.Time = new TimeOnly(9, 12);
         Assert.Equal(0, edits);
 
         field.Type("10:00");
@@ -292,8 +292,8 @@ public sealed class PrimitivesTests
         using var host = new Host();
         foreach (var (rejected, enabled) in new[] { (false, true), (true, true), (false, false) })
         {
-            var field = host.Add(new TimeField { Rejected = rejected, Enabled = enabled });
-            field.Value = new TimeOnly(9, 12);
+            var field = host.Add(new DesignField { Kind = FieldKind.Time, Rejected = rejected, Enabled = enabled });
+            field.Time = new TimeOnly(9, 12);
             Render(field);
         }
     }
@@ -519,11 +519,11 @@ public sealed class PrimitivesTests
     }
 }
 
-/// <summary>Набор текста в поле времени — как его набирает человек.</summary>
-internal static class TimeFieldTyping
+/// <summary>Набор текста в поле — как его набирает человек.</summary>
+internal static class FieldTyping
 {
     /// <summary>Набирает текст в поле так, будто его ввели с клавиатуры.</summary>
-    public static void Type(this TimeField field, string text)
+    public static void Type(this DesignField field, string text)
     {
         ArgumentNullException.ThrowIfNull(field);
 

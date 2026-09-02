@@ -165,7 +165,7 @@ internal sealed class DayForm : DesignForm
         _page = page;
         _band = band;
 
-        Text = "День — " + _date.ToString("d MMMM", Russian);
+        SetTitle("GoHome — день", "День — " + _date.ToString("d MMMM", Russian));
 
         _header.Show(page.Summary, _date, Narrow);
         _figures.Show(page.Summary, Narrow);

@@ -17,8 +17,8 @@ namespace GoHome.Ui.Design;
 /// </remarks>
 internal sealed class BreakEditor : Panel, IPaletteAware
 {
-    private readonly TimeField _start = new();
-    private readonly TimeField _end = new();
+    private readonly DesignField _start = new() { Kind = FieldKind.Time };
+    private readonly DesignField _end = new() { Kind = FieldKind.Time };
     private readonly DesignButton _save;
     private readonly DesignButton _cancel;
 
@@ -56,7 +56,7 @@ internal sealed class BreakEditor : Panel, IPaletteAware
 
     /// <summary>Что набрано сейчас. <c>null</c> — набрано то, чего не разобрать.</summary>
     public (TimeOnly Start, TimeOnly End)? Value =>
-        _start.Value is { } from && _end.Value is { } to ? (from, to) : null;
+        _start.Time is { } from && _end.Time is { } to ? (from, to) : null;
 
     /// <summary>Высота панели: одна строка полей с подписями и отступами.</summary>
     public int PreferredHeight
@@ -80,8 +80,8 @@ internal sealed class BreakEditor : Panel, IPaletteAware
     /// <summary>Открывает правку на этих границах.</summary>
     public void Open(DateTimeOffset start, DateTimeOffset end)
     {
-        _start.Value = TimeOnly.FromDateTime(start.DateTime);
-        _end.Value = TimeOnly.FromDateTime(end.DateTime);
+        _start.Time = TimeOnly.FromDateTime(start.DateTime);
+        _end.Time = TimeOnly.FromDateTime(end.DateTime);
         _refusal = string.Empty;
         Refuse(null);
         PerformLayout();
@@ -95,8 +95,8 @@ internal sealed class BreakEditor : Panel, IPaletteAware
 
         var valid = _refusal.Length == 0 && Value is not null;
         _save.Enabled = valid;
-        _start.Rejected = !valid && _start.Value is null;
-        _end.Rejected = _refusal.Length > 0 || _end.Value is null;
+        _start.Rejected = !valid && _start.Time is null;
+        _end.Rejected = _refusal.Length > 0 || _end.Time is null;
 
         Invalidate();
     }

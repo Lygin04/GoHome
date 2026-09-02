@@ -2,47 +2,71 @@ using System.Diagnostics;
 using System.Globalization;
 using GoHome.App;
 using GoHome.Core;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
 /// <summary>
-/// Настройки: учёт времени, график, уведомления, оформление. Собирается кодом — дизайнер
-/// здесь ничего не добавляет, как и в окне истории.
+/// Настройки: рабочий день, отлучки, уведомления, внешний вид, данные.
 /// </summary>
 /// <remarks>
-/// Настроек много, поэтому они разложены по вкладкам, а не свалены в одно полотно.
 /// Правила расчёта помечены прямо в форме: они действуют со следующего дня, потому что
-/// иначе день окажется посчитан двумя способами. Цель — не правило, она подхватывается сразу.
+/// иначе день окажется посчитан двумя способами. Продолжительность дня — не правило,
+/// она подхватывается сразу, как и тема окон.
+/// <para>
+/// Разделы показываются по одному. Дизайн (1g) держит их одним полотном с якорями слева,
+/// но полотно с прокруткой — это ещё один способ раскладывать содержимое, а по одному
+/// разделу за раз то же самое и без него. В узком окне якоря становятся строкой вкладок,
+/// как в дизайне (1h).
+/// </para>
 /// </remarks>
-public sealed class SettingsForm : Form
+internal sealed class SettingsForm : DesignForm
 {
-    private static readonly CultureInfo Russian = CultureInfo.GetCultureInfo("ru-RU");
+    /// <summary>Названия разделов для колонки якорей.</summary>
+    private static readonly string[] Names =
+        ["Рабочая неделя", "Исключения", "Отлучки и обед", "Уведомления", "Внешний вид", "Данные"];
+
+    /// <summary>
+    /// Те же разделы для строки вкладок в узком окне.
+    /// </summary>
+    /// <remarks>
+    /// Короче: шесть полных названий в шестьсот двадцать точек не помещаются, а дизайн
+    /// в узком окне и так их сокращает.
+    /// </remarks>
+    private static readonly string[] Short = ["Неделя", "Даты", "Отлучки", "Уведом.", "Вид", "Данные"];
 
     private readonly GoHomeService _service;
     private readonly Func<DateTimeOffset> _clock;
 
-    private readonly CheckBox _countShortBreaks;
-    private readonly GroupBox _lunchBox;
-    private readonly Label _lunchDisabled;
-    private readonly DateTimePicker _windowStart;
-    private readonly DateTimePicker _windowEnd;
-    private readonly DurationBox _breakMinimum;
-    private readonly DurationBox _lunchMinimum;
+    private readonly Nav _nav;
+    private readonly SegmentedTabs _tabs;
+    private readonly SettingsSection[] _sections;
 
-    private readonly Dictionary<DayOfWeek, CheckBox> _dayOff = [];
-    private readonly Dictionary<DayOfWeek, DurationBox> _dayHours = [];
-    private readonly ListView _exceptions;
-    private readonly Button _editException;
-    private readonly Button _removeException;
+    private readonly DesignField[] _dayHours = new DesignField[7];
+    private readonly DesignSwitch[] _dayOff = new DesignSwitch[7];
 
-    private readonly CheckBox _warnEnabled;
-    private readonly DurationBox _warnBefore;
+    private readonly ExceptionList _exceptions;
+    private readonly DesignButton _addException;
+    private readonly DesignButton _editException;
+    private readonly DesignButton _removeException;
 
-    private readonly ComboBox _theme;
-    private readonly Label _problems;
-    private readonly Button _save;
+    private readonly DesignSwitch _countShortBreaks;
+    private readonly DesignField _windowStart;
+    private readonly DesignField _windowEnd;
+    private readonly DesignField _breakMinimum;
+    private readonly DesignField _lunchMinimum;
+
+    private readonly DesignSwitch _warnEnabled;
+    private readonly DesignField _warnBefore;
+
+    private readonly SegmentedTabs _theme;
+
+    private readonly Problems _problems;
+    private readonly DesignButton _save;
 
     private List<DateException> _draftExceptions = [];
+    private int _section;
+    private bool _built;
 
     /// <summary>Поля заполняются кодом, и события при этом сыплются — это не правка человека.</summary>
     private bool _filling;
@@ -55,377 +79,331 @@ public sealed class SettingsForm : Form
         _service = service;
         _clock = clock;
 
-        Text = "GoHome — настройки";
-        StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(640, 560);
-        ClientSize = new Size(700, 620);
-        Icon = AppIcon.ForWindows;
-        ShowIcon = Icon is not null;
-        MinimizeBox = false;
+        SetTitle("GoHome — настройки", "Настройки");
+        MaximizeBox = false;
+        SetMinimum(new Size(620, 520));
+        SetInitialSize(new Size(880, 640));
 
-        _countShortBreaks = new CheckBox
+        _nav = new Nav(Names);
+        _nav.SelectionChanged += (_, _) => Choose(_nav.SelectedIndex);
+
+        _tabs = new SegmentedTabs { Items = Short, Visible = false };
+        _tabs.SelectedChanged += (_, _) => Choose(_tabs.Selected);
+
+        // ---- рабочий день ------------------------------------------------------------
+        var day = new SettingsSection
         {
-            Text = "Засчитывать короткие отлучки",
-            AutoSize = true,
+            Label = "Рабочая неделя",
+            Note = "Продолжительность дня и переключатель «нерабочий» справа. "
+                + "Отсюда считаются цель, прогноз ухода и знак «к цели» в статистике.",
         };
 
-        _windowStart = TimePicker();
-        _windowEnd = TimePicker();
-        _breakMinimum = new DurationBox();
-        _lunchMinimum = new DurationBox();
-
-        _lunchDisabled = new Label
+        for (var index = 0; index < WeekSchedule.Days.Count; index++)
         {
-            Dock = DockStyle.Top,
-            Height = 34,
-            ForeColor = SystemColors.GrayText,
-            Text = "Короткие отлучки не засчитываются, поэтому обед не определяется: "
-                + "из рабочего времени вычитается любая блокировка экрана.",
-        };
+            var weekday = WeekSchedule.Days[index];
+            var hours = new DesignField { Kind = FieldKind.Duration };
+            var off = new DesignSwitch();
+            var slot = index;
 
-        _lunchBox = new GroupBox { Text = "Обед", Dock = DockStyle.Top, Height = 180 };
-
-        _exceptions = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            HeaderStyle = ColumnHeaderStyle.Nonclickable,
-            MultiSelect = false,
-            HideSelection = false,
-            UseCompatibleStateImageBehavior = false,
-        };
-
-        _exceptions.Columns.Add("Дата", 150);
-        _exceptions.Columns.Add("День", 110);
-        _exceptions.Columns.Add("Продолжительность", 140, HorizontalAlignment.Center);
-        _exceptions.Columns.Add("Пометка", 220);
-        _exceptions.DoubleClick += (_, _) => EditException();
-
-        _editException = new Button { Text = "Изменить…", Width = 110, Enabled = false };
-        _removeException = new Button { Text = "Удалить", Width = 110, Enabled = false };
-        _exceptions.SelectedIndexChanged += (_, _) => UpdateExceptionButtons();
-
-        _warnEnabled = new CheckBox
-        {
-            Text = "Предупреждать, что норма скоро",
-            Dock = DockStyle.Top,
-            Height = 30,
-        };
-
-        _warnBefore = new DurationBox();
-
-        _theme = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
-        _theme.Items.AddRange(["Как в системе", "Светлая", "Тёмная"]);
-
-        _problems = new Label
-        {
-            Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(200, 60, 60),
-            Padding = new Padding(12, 4, 12, 4),
-        };
-
-        _save = new Button { Text = "Сохранить", Width = 110 };
-        _save.Click += (_, _) => Save();
-
-        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(12, 6) };
-        tabs.TabPages.Add(AccountingPage());
-        tabs.TabPages.Add(SchedulePage());
-        tabs.TabPages.Add(NotificationsPage());
-        tabs.TabPages.Add(AppearancePage());
-
-        Controls.Add(tabs);
-        Controls.Add(Footer());
-
-        Fill(_service.Settings);
-        Watch();
-    }
-
-    /// <summary>Настройки сохранены — трею пора перерисоваться.</summary>
-    public event EventHandler? Saved;
-
-    // ---- вкладки -------------------------------------------------------------------
-
-    private TabPage AccountingPage()
-    {
-        var page = new TabPage("Учёт времени") { Padding = new Padding(12), UseVisualStyleBackColor = true };
-
-        var lunch = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            Padding = new Padding(12, 8, 12, 8),
-        };
-
-        lunch.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
-        lunch.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        lunch.Controls.Add(Caption("Обеденное окно, с"), 0, 0);
-        lunch.Controls.Add(_windowStart, 1, 0);
-        lunch.Controls.Add(Caption("Обеденное окно, по"), 0, 1);
-        lunch.Controls.Add(_windowEnd, 1, 1);
-        lunch.Controls.Add(Caption("Короче этого — не отлучка"), 0, 2);
-        lunch.Controls.Add(_breakMinimum, 1, 2);
-        lunch.Controls.Add(Caption("Короче этого — не обед"), 0, 3);
-        lunch.Controls.Add(_lunchMinimum, 1, 3);
-
-        _lunchBox.Controls.Add(lunch);
-
-        var explain = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 60,
-            ForeColor = SystemColors.GrayText,
-            Text = "Включено: короткая отлучка идёт в рабочее время, а из него вычитается только обед — "
-                + "одна отлучка за день, попавшая в окно и достаточно длинная.\r\n"
-                + "Выключено: счёт останавливает любая блокировка экрана, независимо от длительности.",
-        };
-
-        var rulesNote = new Label
-        {
-            Dock = DockStyle.Bottom,
-            Height = 46,
-            ForeColor = SystemColors.GrayText,
-            Text = "Правила расчёта действуют со следующего дня: сегодняшний уже посчитан по тем, "
-                + "с которыми начался, и пересчитывать его половину задним числом нельзя. "
-                + "Продолжительность дня — не правило, она подхватывается сразу.",
-        };
-
-        page.Controls.Add(_lunchBox);
-        page.Controls.Add(_lunchDisabled);
-        page.Controls.Add(explain);
-        page.Controls.Add(_countShortBreaks);
-        page.Controls.Add(rulesNote);
-
-        return page;
-    }
-
-    private TabPage SchedulePage()
-    {
-        var page = new TabPage("График") { Padding = new Padding(12), UseVisualStyleBackColor = true };
-
-        var week = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            ColumnCount = 3,
-            Height = 230,
-            Padding = new Padding(4),
-        };
-
-        week.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-        week.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-        week.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        var row = 0;
-        foreach (var day in WeekSchedule.Days)
-        {
-            var hours = new DurationBox();
-            var off = new CheckBox { Text = "нерабочий", AutoSize = true, Anchor = AnchorStyles.Left };
-
-            var captured = day;
             off.CheckedChanged += (_, _) =>
             {
-                _dayHours[captured].Enabled = !off.Checked;
+                _dayHours[slot].Enabled = !off.Checked;
                 Revalidate();
             };
 
             hours.ValueChanged += (_, _) => Revalidate();
 
-            _dayHours[day] = hours;
-            _dayOff[day] = off;
+            _dayHours[index] = hours;
+            _dayOff[index] = off;
 
-            week.Controls.Add(Caption(Capitalize(SettingsCheck.DayName(day))), 0, row);
-            week.Controls.Add(hours, 1, row);
-            week.Controls.Add(off, 2, row);
-            row++;
+            day.Add(Capitalize(SettingsCheck.DayName(weekday)), string.Empty, hours, off);
         }
 
-        var exceptionsBox = new GroupBox { Text = "Исключения по датам", Dock = DockStyle.Fill };
+        _exceptions = new ExceptionList();
+        _exceptions.SelectionChanged += (_, _) => UpdateExceptionButtons();
+        _exceptions.RowActivated += (_, _) => EditException();
 
-        var add = new Button { Text = "Добавить…", Width = 110 };
-        add.Click += (_, _) => AddException();
+        _addException = new DesignButton { Text = "Добавить…" };
+        _addException.Click += (_, _) => AddException();
+
+        _editException = new DesignButton { Text = "Изменить…", Enabled = false };
         _editException.Click += (_, _) => EditException();
+
+        _removeException = new DesignButton { Kind = ButtonKind.Danger, Text = "Удалить", Enabled = false };
         _removeException.Click += (_, _) => RemoveException();
 
-        var buttons = new FlowLayoutPanel
+        // ---- отлучки и обед -----------------------------------------------------------
+        _countShortBreaks = new DesignSwitch();
+        _countShortBreaks.CheckedChanged += (_, _) =>
         {
-            Dock = DockStyle.Bottom,
-            FlowDirection = FlowDirection.LeftToRight,
-            Height = 40,
-            Padding = new Padding(6),
+            UpdateLunchEnabled();
+            Revalidate();
         };
 
-        buttons.Controls.AddRange([add, _editException, _removeException]);
+        _windowStart = new DesignField { Kind = FieldKind.Time };
+        _windowEnd = new DesignField { Kind = FieldKind.Time };
+        _breakMinimum = new DesignField { Kind = FieldKind.Duration };
+        _lunchMinimum = new DesignField { Kind = FieldKind.Duration };
 
-        var hint = new Label
+        foreach (var field in new[] { _windowStart, _windowEnd, _breakMinimum, _lunchMinimum })
         {
-            Dock = DockStyle.Bottom,
-            Height = 34,
-            ForeColor = SystemColors.GrayText,
-            Padding = new Padding(6, 0, 6, 0),
-            Text = "Отпуск, праздники, сокращённые дни. Исключение сильнее недельного графика. "
+            field.ValueChanged += (_, _) => Revalidate();
+        }
+
+        var breaks = new SettingsSection
+        {
+            Label = "Отлучки и обед",
+            Note = "Как автоматика решает, что засчитать. Ручная правка дня всегда сильнее этих правил.",
+        };
+
+        breaks.Add(
+            "Засчитывать короткие отлучки",
+            "Выключено — счёт останавливает любая блокировка экрана",
+            _countShortBreaks);
+
+        breaks.Add("Обеденное окно, с", "Раньше этого отлучка обедом не считается", _windowStart);
+        breaks.Add("Обеденное окно, по", "Позже этого — тоже", _windowEnd);
+        breaks.Add("Короче этого — не отлучка", "Совсем короткие блокировки в список не попадают", _breakMinimum);
+        breaks.Add("Короче этого — не обед", "Короткая отлучка в окне обедом не станет", _lunchMinimum);
+
+        // ---- уведомления ---------------------------------------------------------------
+        _warnBefore = new DesignField { Kind = FieldKind.Duration };
+        _warnBefore.ValueChanged += (_, _) => Revalidate();
+
+        // Создаётся после поля: выключатель им распоряжается, и поле должно уже быть.
+        _warnEnabled = new DesignSwitch();
+        _warnEnabled.CheckedChanged += (_, _) =>
+        {
+            _warnBefore.Enabled = _warnEnabled.Checked;
+            Revalidate();
+        };
+
+        var notifications = new SettingsSection
+        {
+            Label = "Уведомления",
+            Note = "Единственное, что GoHome показывает поверх работы.",
+        };
+
+        notifications.Add("Предупреждать, что норма скоро", "Приходит один раз за день", _warnEnabled);
+        notifications.Add("За сколько до нормы", "Столько, чтобы успеть свернуть дела", _warnBefore);
+
+        // ---- внешний вид ------------------------------------------------------------------
+        _theme = new SegmentedTabs { Items = ["Как в системе", "Светлая", "Тёмная"] };
+        _theme.SelectedChanged += (_, _) =>
+        {
+            // Тема — предпочтение, а не правило: применяется сразу, не дожидаясь сохранения.
+            WindowTheme.Apply((AppTheme)_theme.Selected);
+            Revalidate();
+        };
+
+        var appearance = new SettingsSection
+        {
+            Label = "Внешний вид",
+            Note = "Применяется сразу ко всем открытым окнам.",
+        };
+
+        appearance.Add(
+            "Тема окон",
+            "На кольцо в трее не влияет: оно следует оформлению панели задач",
+            _theme);
+
+        // ---- данные --------------------------------------------------------------------------
+        var settingsFile = new DesignButton { Text = "Показать в папке" };
+        settingsFile.Click += (_, _) => Reveal(_service.SettingsPath);
+
+        var dataFolder = new DesignButton { Text = "Показать в папке" };
+        dataFolder.Click += (_, _) => Reveal(_service.DataRoot);
+
+        var reset = new DesignButton { Kind = ButtonKind.Danger, Text = "Сбросить всё" };
+        reset.Click += (_, _) => Fill(AppSettings.Default);
+
+        var data = new SettingsSection
+        {
+            Label = "Данные",
+            Note = "Журнал — обычные файлы. Их можно открыть, скопировать и править руками.",
+        };
+
+        data.Add("Файл настроек", _service.SettingsPath ?? string.Empty, settingsFile);
+        data.Add("Каталог данных", _service.DataRoot ?? string.Empty, dataFolder);
+        data.Add("Сбросить настройки", "Файлы дней это не затронет", reset);
+
+        var dates = new SettingsSection
+        {
+            Label = "Исключения по датам",
+            Note = "Отпуск, праздники, сокращённые дни. Исключение сильнее недельного графика. "
                 + "Производственный календарь не загружается — сеть в приложении не используется.",
         };
 
-        exceptionsBox.Controls.Add(_exceptions);
-        exceptionsBox.Controls.Add(buttons);
-        exceptionsBox.Controls.Add(hint);
+        _sections = [day, dates, breaks, notifications, appearance, data];
 
-        page.Controls.Add(exceptionsBox);
-        page.Controls.Add(week);
+        _problems = new Problems();
+        _save = new DesignButton { Kind = ButtonKind.Primary, Text = "Сохранить" };
+        _save.Click += (_, _) => Save();
 
-        return page;
+        var close = new DesignButton { Text = "Закрыть" };
+        close.Click += (_, _) => Close();
+        CloseButton = close;
+
+        Content.Controls.AddRange([_nav, _tabs, _problems, _save, close]);
+        Content.Controls.AddRange(_sections);
+        Content.Controls.AddRange([_exceptions, _addException, _editException, _removeException]);
+
+        _built = true;
+        Fill(_service.Settings);
+        Choose(0);
     }
 
-    private TabPage NotificationsPage()
+    /// <summary>Настройки сохранены — трею пора перерисоваться.</summary>
+    public event EventHandler? Saved;
+
+    private DesignButton? CloseButton { get; init; }
+
+    /// <inheritdoc/>
+    protected override void OnResize(EventArgs e)
     {
-        var page = new TabPage("Уведомления") { Padding = new Padding(12), UseVisualStyleBackColor = true };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            ColumnCount = 2,
-            Height = 44,
-        };
-
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.Controls.Add(Caption("За сколько до нормы"), 0, 0);
-        layout.Controls.Add(_warnBefore, 1, 0);
-
-        var note = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 120,
-            ForeColor = SystemColors.GrayText,
-            Text = "Смысл предупреждения в том, чтобы успеть свернуть дела, а не узнать постфактум."
-                + Environment.NewLine
-                + "Приходит один раз за день. В нерабочий день не приходит — нормы у него нет. "
-                + "Во время паузы не возникает: в паузе отработанное не растёт."
-                + Environment.NewLine
-                + "Если пересчёт перебросил счётчик сразу через оба порога, придёт только уведомление "
-                + "о норме: два подряд про одно и то же выглядят сломанными."
-                + Environment.NewLine
-                + "Применяется сразу, как и тема окон.",
-        };
-
-        page.Controls.Add(note);
-        page.Controls.Add(layout);
-        page.Controls.Add(_warnEnabled);
-
-        return page;
+        base.OnResize(e);
+        Relayout();
     }
 
-    private TabPage AppearancePage()
+    /// <inheritdoc/>
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        var page = new TabPage("Оформление") { Padding = new Padding(12), UseVisualStyleBackColor = true };
-
-        var layout = new TableLayoutPanel
+        if (keyData == Keys.Escape)
         {
-            Dock = DockStyle.Top,
-            ColumnCount = 2,
-            Height = 44,
-        };
+            Close();
+            return true;
+        }
 
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.Controls.Add(Caption("Тема окон"), 0, 0);
-        layout.Controls.Add(_theme, 1, 0);
-
-        var note = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 74,
-            ForeColor = SystemColors.GrayText,
-            Text = "Тема применяется к окнам настроек и истории. На кольцо в трее она не влияет: "
-                + "кольцо живёт на панели задач и следует её оформлению — иначе тёмное кольцо "
-                + "на светлой панели станет невидимым.\r\n"
-                + "Заголовок уже открытого окна догонит тему при следующем его открытии.",
-        };
-
-        page.Controls.Add(note);
-        page.Controls.Add(layout);
-
-        return page;
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
-    private Control Footer()
+    /// <summary>Узкое окно: якоря слева сворачиваются в строку вкладок сверху.</summary>
+    private bool Narrow => Width < Sizes.SettingsTabsBreakpoint;
+
+    private void Choose(int index)
     {
-        var openSettings = new Button { Text = "Файл настроек", Width = 130 };
-        openSettings.Click += (_, _) => Reveal(_service.SettingsPath);
+        _section = Math.Clamp(index, 0, _sections.Length - 1);
+        _nav.SelectedIndex = _section;
+        _tabs.Selected = _section;
 
-        var openData = new Button { Text = "Каталог данных", Width = 130 };
-        openData.Click += (_, _) => Reveal(_service.DataRoot);
-
-        var reset = new Button { Text = "Сбросить всё", Width = 120 };
-        reset.Click += (_, _) => ResetToDefaults();
-
-        var close = new Button { Text = "Закрыть", Width = 100, DialogResult = DialogResult.Cancel };
-
-        var left = new FlowLayoutPanel
+        for (var slot = 0; slot < _sections.Length; slot++)
         {
-            Dock = DockStyle.Left,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = true,
-        };
+            _sections[slot].Visible = slot == _section;
+        }
 
-        left.Controls.AddRange([openSettings, openData, reset]);
+        var exceptions = _section == 1;
+        _exceptions.Visible = exceptions;
+        _addException.Visible = exceptions;
+        _editException.Visible = exceptions;
+        _removeException.Visible = exceptions;
 
-        var right = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Right,
-            FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false,
-            AutoSize = true,
-        };
-
-        right.Controls.AddRange([close, _save]);
-
-        var buttons = new Panel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(12, 6, 12, 6) };
-        buttons.Controls.Add(left);
-        buttons.Controls.Add(right);
-
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 96 };
-        footer.Controls.Add(_problems);
-        footer.Controls.Add(buttons);
-
-        CancelButton = close;
-        return footer;
+        Relayout();
     }
 
-    // ---- чтение и запись -----------------------------------------------------------
+    private void Relayout()
+    {
+        if (!_built)
+        {
+            return;
+        }
+
+        var metrics = Sizes;
+        var pad = metrics.Space(4);
+        var gap = metrics.Space(2);
+        var narrow = Narrow;
+
+        _nav.Visible = !narrow;
+        _tabs.Visible = narrow;
+
+        var top = pad;
+        var left = pad;
+        var right = Content.ClientSize.Width - pad;
+
+        if (narrow)
+        {
+            _tabs.FitToItems();
+            _tabs.Location = new Point(left, top);
+            top += _tabs.Height + metrics.Space(4);
+        }
+        else
+        {
+            _nav.SetBounds(0, 0, metrics.Scale(196), Content.ClientSize.Height);
+            left = _nav.Right + metrics.Space(5);
+        }
+
+        // ---- подвал: проверка и кнопки ------------------------------------------------
+        var bottom = Content.ClientSize.Height - pad;
+        _save.FitToText();
+        CloseButton!.FitToText();
+
+        CloseButton.Location = new Point(right - CloseButton.Width, bottom - CloseButton.Height);
+        _save.Location = new Point(CloseButton.Left - _save.Width - gap, bottom - _save.Height);
+
+        var footer = bottom - _save.Height - metrics.Space(3);
+        _problems.SetBounds(left, footer - metrics.Scale(40), Math.Max(0, right - left), metrics.Scale(40));
+
+        // ---- раздел ----------------------------------------------------------------------
+        var width = Math.Max(metrics.Scale(200), right - left);
+        var section = _sections[_section];
+
+        // Ширина ставится раньше высоты: пояснение раздела переносится по словам,
+        // и сколько оно займёт строк, известно только после того, как ширина задана.
+        section.Width = width;
+        section.SetBounds(left, top, width, section.PreferredHeight);
+
+        if (_exceptions.Visible)
+        {
+            foreach (var button in new[] { _addException, _editException, _removeException })
+            {
+                button.FitToText();
+            }
+
+            var listTop = section.Bottom + metrics.Space(4);
+            var buttons = _problems.Top - metrics.Space(3) - _addException.Height;
+
+            var x = left;
+            foreach (var button in new[] { _addException, _editException, _removeException })
+            {
+                button.Location = new Point(x, buttons);
+                x += button.Width + gap;
+            }
+
+            _exceptions.SetBounds(left, listTop, width, Math.Max(0, buttons - listTop - gap));
+        }
+    }
+
+    // ---- чтение и запись -------------------------------------------------------------------
 
     private void Fill(AppSettings settings)
     {
         _filling = true;
 
         _countShortBreaks.Checked = settings.CountShortBreaks;
-        _windowStart.Value = Today(settings.Lunch.WindowStart);
-        _windowEnd.Value = Today(settings.Lunch.WindowEnd);
-        _breakMinimum.Value = settings.Lunch.Minimum;
-        _lunchMinimum.Value = settings.Lunch.GuessMinimum;
+        _windowStart.Time = settings.Lunch.WindowStart;
+        _windowEnd.Time = settings.Lunch.WindowEnd;
+        _breakMinimum.Duration = settings.Lunch.Minimum;
+        _lunchMinimum.Duration = settings.Lunch.GuessMinimum;
 
-        foreach (var day in WeekSchedule.Days)
+        for (var index = 0; index < WeekSchedule.Days.Count; index++)
         {
-            var hours = settings.Schedule[day];
-            _dayOff[day].Checked = hours is null;
-            _dayHours[day].Value = hours ?? WorkTimeCalculator.DefaultGoal;
-            _dayHours[day].Enabled = hours is not null;
+            var hours = settings.Schedule[WeekSchedule.Days[index]];
+            _dayOff[index].Checked = hours is null;
+            _dayHours[index].Duration = hours ?? WorkTimeCalculator.DefaultGoal;
+            _dayHours[index].Enabled = hours is not null;
         }
 
         _draftExceptions = [.. settings.Exceptions];
 
         _warnEnabled.Checked = settings.WarnsBeforeGoal;
-        _warnBefore.Value = settings.WarnsBeforeGoal ? settings.WarnBefore : AppSettings.DefaultWarnBefore;
+        _warnBefore.Duration = settings.WarnsBeforeGoal ? settings.WarnBefore : AppSettings.DefaultWarnBefore;
+        _warnBefore.Enabled = settings.WarnsBeforeGoal;
 
-        _theme.SelectedIndex = (int)settings.Theme;
+        _theme.Selected = (int)settings.Theme;
 
         _filling = false;
 
         ShowExceptions();
         UpdateLunchEnabled();
-        UpdateWarningEnabled();
         Revalidate();
     }
 
@@ -433,26 +411,28 @@ public sealed class SettingsForm : Form
     private AppSettings Collect()
     {
         var schedule = WeekSchedule.Default;
-        foreach (var day in WeekSchedule.Days)
+        for (var index = 0; index < WeekSchedule.Days.Count; index++)
         {
-            schedule = schedule.With(day, _dayOff[day].Checked ? null : _dayHours[day].Value);
+            schedule = schedule.With(
+                WeekSchedule.Days[index],
+                _dayOff[index].Checked ? null : _dayHours[index].Duration ?? TimeSpan.Zero);
         }
 
         return _service.Settings with
         {
             CountShortBreaks = _countShortBreaks.Checked,
             Lunch = new LunchRules(
-                TimeOnly.FromDateTime(_windowStart.Value),
-                TimeOnly.FromDateTime(_windowEnd.Value),
-                _breakMinimum.Value,
-                _lunchMinimum.Value),
+                _windowStart.Time ?? LunchRules.Default.WindowStart,
+                _windowEnd.Time ?? LunchRules.Default.WindowEnd,
+                _breakMinimum.Duration ?? TimeSpan.Zero,
+                _lunchMinimum.Duration ?? TimeSpan.Zero),
             Schedule = schedule,
             Exceptions = _draftExceptions,
 
             // Снятая галочка — это ноль, а не спрятанное значение: в файле настроек
             // выключенное предупреждение должно выглядеть выключенным.
-            WarnBefore = _warnEnabled.Checked ? _warnBefore.Value : TimeSpan.Zero,
-            Theme = (AppTheme)Math.Max(_theme.SelectedIndex, 0),
+            WarnBefore = _warnEnabled.Checked ? _warnBefore.Duration ?? TimeSpan.Zero : TimeSpan.Zero,
+            Theme = (AppTheme)Math.Max(_theme.Selected, 0),
         };
     }
 
@@ -466,67 +446,45 @@ public sealed class SettingsForm : Form
         }
 
         _service.SaveSettings(settings, _clock());
-
-        // Предпочтение, а не правило: применяется немедленно, без перезапуска.
         WindowTheme.Apply(settings.Theme);
 
         Saved?.Invoke(this, EventArgs.Empty);
         Close();
     }
 
-    private void ResetToDefaults()
-    {
-        var answer = MessageBox.Show(
-            this,
-            "Вернуть все настройки к значениям по умолчанию? Файлы дней это не затронет.",
-            "GoHome",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-
-        if (answer == DialogResult.Yes)
-        {
-            Fill(AppSettings.Default);
-        }
-    }
-
     /// <summary>Недопустимое значение не даёт сохранить и объясняет причину.</summary>
     private void Revalidate()
     {
-        if (_filling)
+        if (_filling || !_built)
         {
             return;
         }
 
+        // Неразобранное поле — тоже недопустимое значение, и краснеет оно само.
+        var unparsed = Fields().Any(field => field.Visible && field.Enabled && !field.IsValid);
         var problems = SettingsCheck.Validate(Collect());
-        _problems.Text = string.Join(Environment.NewLine, problems.Select(problem => "• " + problem.Message));
-        _save.Enabled = problems.Count == 0;
+
+        _problems.Show(unparsed
+            ? ["Время набрано не полностью."]
+            : [.. problems.Select(problem => problem.Message)]);
+
+        _save.Enabled = !unparsed && problems.Count == 0;
+        Relayout();
     }
 
-    private void Watch()
+    private IEnumerable<DesignField> Fields()
     {
-        _countShortBreaks.CheckedChanged += (_, _) =>
+        foreach (var field in _dayHours)
         {
-            UpdateLunchEnabled();
-            Revalidate();
-        };
+            yield return field;
+        }
 
-        _windowStart.ValueChanged += (_, _) => Revalidate();
-        _windowEnd.ValueChanged += (_, _) => Revalidate();
-        _breakMinimum.ValueChanged += (_, _) => Revalidate();
-        _lunchMinimum.ValueChanged += (_, _) => Revalidate();
-        _theme.SelectedIndexChanged += (_, _) => Revalidate();
-
-        _warnEnabled.CheckedChanged += (_, _) =>
-        {
-            UpdateWarningEnabled();
-            Revalidate();
-        };
-
-        _warnBefore.ValueChanged += (_, _) => Revalidate();
+        yield return _windowStart;
+        yield return _windowEnd;
+        yield return _breakMinimum;
+        yield return _lunchMinimum;
+        yield return _warnBefore;
     }
-
-    /// <summary>Выключенное предупреждение не оставляет активным поле, которое ни на что не влияет.</summary>
-    private void UpdateWarningEnabled() => _warnBefore.Enabled = _warnEnabled.Checked;
 
     /// <summary>
     /// При выключенном зачёте настройки обеда недоступны: они не влияют ни на что,
@@ -535,36 +493,19 @@ public sealed class SettingsForm : Form
     private void UpdateLunchEnabled()
     {
         var enabled = _countShortBreaks.Checked;
-        _lunchBox.Enabled = enabled;
-        _lunchBox.Visible = enabled;
-        _lunchDisabled.Visible = !enabled;
+
+        foreach (var field in new[] { _windowStart, _windowEnd, _breakMinimum, _lunchMinimum })
+        {
+            field.Enabled = enabled;
+        }
     }
 
-    // ---- исключения ----------------------------------------------------------------
+    // ---- исключения ------------------------------------------------------------------------
 
     private void ShowExceptions()
     {
         _draftExceptions.Sort((left, right) => left.Date.CompareTo(right.Date));
-
-        _exceptions.BeginUpdate();
-        _exceptions.Items.Clear();
-
-        foreach (var exception in _draftExceptions)
-        {
-            var item = new ListViewItem(exception.Date.ToString("dd.MM.yyyy", Russian)) { Tag = exception };
-            item.SubItems.Add(Capitalize(SettingsCheck.DayName(exception.Date.DayOfWeek)));
-            item.SubItems.Add(exception.Hours is { } hours ? WorkTimeFormat.Duration(hours) : "нерабочий");
-            item.SubItems.Add(exception.Note ?? string.Empty);
-
-            if (exception.IsDayOff)
-            {
-                item.ForeColor = SystemColors.GrayText;
-            }
-
-            _exceptions.Items.Add(item);
-        }
-
-        _exceptions.EndUpdate();
+        _exceptions.Show(_draftExceptions);
         UpdateExceptionButtons();
     }
 
@@ -576,14 +517,15 @@ public sealed class SettingsForm : Form
     }
 
     private DateException? Selected() =>
-        _exceptions.SelectedItems.Count > 0 && _exceptions.SelectedItems[0].Tag is DateException exception
-            ? exception
+        _exceptions.SelectedIndex >= 0 && _exceptions.SelectedIndex < _draftExceptions.Count
+            ? _draftExceptions[_exceptions.SelectedIndex]
             : null;
 
     private void AddException()
     {
         var date = WorkDay.DateOf(_clock());
         using var dialog = new DayExceptionDialog(date, null, _service.Settings.Schedule[date.DayOfWeek], lockDate: false);
+
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
             Put(dialog.Result);
@@ -605,7 +547,7 @@ public sealed class SettingsForm : Form
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            _draftExceptions.RemoveAll(e => e.Date == exception.Date);
+            _draftExceptions.RemoveAll(item => item.Date == exception.Date);
             Put(dialog.Result);
         }
     }
@@ -614,7 +556,7 @@ public sealed class SettingsForm : Form
     {
         if (Selected() is { } exception)
         {
-            _draftExceptions.RemoveAll(e => e.Date == exception.Date);
+            _draftExceptions.RemoveAll(item => item.Date == exception.Date);
             ShowExceptions();
             Revalidate();
         }
@@ -622,33 +564,16 @@ public sealed class SettingsForm : Form
 
     private void Put(DateException exception)
     {
-        _draftExceptions.RemoveAll(e => e.Date == exception.Date);
+        _draftExceptions.RemoveAll(item => item.Date == exception.Date);
         _draftExceptions.Add(exception);
         ShowExceptions();
         Revalidate();
     }
 
-    // ---- мелочи --------------------------------------------------------------------
-
-    private static Label Caption(string text) => new()
-    {
-        Text = text,
-        AutoSize = true,
-        Anchor = AnchorStyles.Left,
-        Padding = new Padding(0, 6, 0, 0),
-    };
-
-    private static DateTimePicker TimePicker() => new()
-    {
-        Format = DateTimePickerFormat.Time,
-        ShowUpDown = true,
-        Width = 110,
-    };
-
-    private static DateTime Today(TimeOnly time) => DateTime.Today.Add(time.ToTimeSpan());
+    // ---- мелочи ---------------------------------------------------------------------------------
 
     private static string Capitalize(string text) =>
-        text.Length == 0 ? text : char.ToUpper(text[0], Russian) + text[1..];
+        text.Length == 0 ? text : char.ToUpper(text[0], CultureInfo.GetCultureInfo("ru-RU")) + text[1..];
 
     /// <summary>Открывает файл или каталог в проводнике. Нечем открыть — молча ничего.</summary>
     private static void Reveal(string path)
@@ -669,6 +594,143 @@ public sealed class SettingsForm : Form
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException or ArgumentException)
         {
             // Показывать нечего — молча пропускаем.
+        }
+    }
+
+    // ---- нарисованные части окна ------------------------------------------------------------------
+
+    /// <summary>Колонка якорей слева.</summary>
+    private sealed class Nav : DesignList
+    {
+        private readonly string[] _items;
+
+        public Nav(string[] items)
+        {
+            _items = items;
+            Separators = false;
+            Count = items.Length;
+            SelectedIndex = 0;
+        }
+
+        protected override void PaintRow(
+            Graphics graphics,
+            int index,
+            Rectangle bounds,
+            Palette palette,
+            RowState state)
+        {
+            TextRenderer.DrawText(
+                graphics,
+                _items[index],
+                Fonts.Control,
+                bounds,
+                state.Selected ? palette.Ink : palette.Muted,
+                Middle);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            ArgumentNullException.ThrowIfNull(e);
+
+            var palette = Colors;
+            using (var back = new SolidBrush(palette.Sidebar))
+            {
+                e.Graphics.FillRectangle(back, ClientRectangle);
+            }
+
+            using (var line = new Pen(palette.LineSoft))
+            {
+                e.Graphics.DrawLine(line, Width - 1, 0, Width - 1, Height);
+            }
+
+            base.OnPaint(e);
+        }
+    }
+
+    /// <summary>Исключения по датам списком.</summary>
+    private sealed class ExceptionList : DesignList
+    {
+        private static readonly CultureInfo Russian = CultureInfo.GetCultureInfo("ru-RU");
+
+        private readonly List<DateException> _items = [];
+
+        public void Show(IReadOnlyList<DateException> exceptions)
+        {
+            ArgumentNullException.ThrowIfNull(exceptions);
+
+            _items.Clear();
+            _items.AddRange(exceptions);
+            Count = _items.Count;
+        }
+
+        protected override void PaintRow(
+            Graphics graphics,
+            int index,
+            Rectangle bounds,
+            Palette palette,
+            RowState state)
+        {
+            var item = _items[index];
+            var metrics = Sizes;
+            var fonts = Fonts;
+
+            var dateWidth = metrics.Scale(110);
+            TextRenderer.DrawText(
+                graphics,
+                item.Date.ToString("dd.MM.yyyy", Russian),
+                fonts.Number,
+                new Rectangle(bounds.Left, bounds.Top, dateWidth, bounds.Height),
+                RowInk(palette, state),
+                Middle);
+
+            var hours = item.Hours is { } value ? WorkTimeFormat.Duration(value) : "нерабочий";
+            var hoursWidth = metrics.Scale(90);
+
+            TextRenderer.DrawText(
+                graphics,
+                hours,
+                item.Hours is null ? fonts.Body : fonts.Number,
+                new Rectangle(bounds.Left + dateWidth, bounds.Top, hoursWidth, bounds.Height),
+                item.Hours is null ? RowMuted(palette, state) : RowInk(palette, state),
+                Middle);
+
+            TextRenderer.DrawText(
+                graphics,
+                item.Note ?? string.Empty,
+                fonts.Body,
+                Rectangle.FromLTRB(bounds.Left + dateWidth + hoursWidth, bounds.Top, bounds.Right, bounds.Bottom),
+                RowMuted(palette, state),
+                Middle);
+        }
+    }
+
+    /// <summary>Список того, что мешает сохранить.</summary>
+    private sealed class Problems : DrawnPanel
+    {
+        private string[] _messages = [];
+
+        public void Show(IReadOnlyList<string> messages)
+        {
+            _messages = [.. messages];
+            Invalidate();
+        }
+
+        protected override void Render(Graphics graphics, Palette palette, Metrics metrics, Typography fonts)
+        {
+            var y = 0;
+
+            foreach (var message in _messages)
+            {
+                TextRenderer.DrawText(
+                    graphics,
+                    "• " + message,
+                    fonts.Caption,
+                    new Rectangle(0, y, Width, fonts.Caption.Height),
+                    palette.Danger,
+                    Flat);
+
+                y += fonts.Caption.Height + metrics.Scale(2);
+            }
         }
     }
 }

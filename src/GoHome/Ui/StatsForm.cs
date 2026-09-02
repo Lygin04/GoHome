@@ -294,7 +294,7 @@ internal sealed class StatsForm : DesignForm
             ? $"Не прочиталось файлов дней: {stats.Unreadable}. Числа за период неполные — поправьте синтаксис JSON."
             : string.Empty);
 
-        Text = "Статистика — " + stats.Range.Title;
+        SetTitle("GoHome — статистика", "Статистика — " + stats.Range.Title);
         Relayout();
     }
 

@@ -42,7 +42,7 @@ public sealed class DayFormTests : IDisposable
             service.RecordReturn(At(13, 45), "unlock");
 
             using var form = Open(service, At(17));
-            Assert.Contains("День", form.Text, StringComparison.Ordinal);
+            Assert.Contains("день", form.Text, StringComparison.Ordinal);
             Render(form);
         });
     }
@@ -159,9 +159,11 @@ public sealed class DayFormTests : IDisposable
             using var form = Open(service, At(12));
             form.ShowDate(Today.AddDays(5));
 
+            // Заголовок в панели задач у всех дней один — смотреть надо на подпись в полосе.
+            var caption = Find<Control>(form).First(control => control.GetType().Name == "CaptionBar");
             Assert.Contains(
                 Today.ToString("d MMMM", System.Globalization.CultureInfo.GetCultureInfo("ru-RU")),
-                form.Text,
+                (string)caption.GetType().GetProperty("Caption")!.GetValue(caption)!,
                 StringComparison.Ordinal);
         });
     }

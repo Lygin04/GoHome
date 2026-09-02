@@ -97,7 +97,7 @@ public sealed class FormsSmokeTests : IDisposable
 
             // Ответ возвращается в UI-поток, поэтому без насоса сообщений он не доедет.
             Assert.True(
-                Pump(() => form.Controls.Count > 0 && form.Text.Contains("Статистика", StringComparison.Ordinal)),
+                Pump(() => form.Controls.Count > 0 && form.Text.Contains("статистика", StringComparison.Ordinal)),
                 "статистика не доехала до окна");
         });
     }
@@ -112,7 +112,7 @@ public sealed class FormsSmokeTests : IDisposable
             service.RecordPause(At(18), TimeSpan.Zero, "lock");
 
             using var form = Stats(service, At(19));
-            Assert.True(Pump(() => form.Text.Contains("Статистика", StringComparison.Ordinal)));
+            Assert.True(Pump(() => form.Text.Contains("статистика", StringComparison.Ordinal)));
 
             DateOnly? asked = null;
             form.DayRequested += (_, date) => asked = date;

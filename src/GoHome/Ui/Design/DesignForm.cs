@@ -62,6 +62,20 @@ internal class DesignForm : Form, IPaletteAware
     /// <summary>Размеры дизайна под текущий масштаб экрана.</summary>
     protected Metrics Sizes => Metrics.Of(this);
 
+    /// <summary>
+    /// Задаёт заголовок окна и подпись в полосе по отдельности.
+    /// </summary>
+    /// <remarks>
+    /// Это разные надписи. В полосе стоит короткая, как в дизайне: рядом с ней и так
+    /// нарисован знак приложения. В панели задач и в Alt+Tab короткая была бы «Настройки»
+    /// среди чужих настроек — там нужно имя приложения.
+    /// </remarks>
+    protected void SetTitle(string title, string caption)
+    {
+        Text = title;
+        _caption.Caption = caption;
+    }
+
     /// <inheritdoc/>
     [AllowNull]
     public override string Text
