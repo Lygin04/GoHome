@@ -215,6 +215,54 @@ public sealed class DayBandTests
         Assert.Equal(1d, band.Fraction(At(23, 59)));
     }
 
+    /// <summary>
+    /// Текущий момент может быть заметно позже последней отметки: пришёл в девять,
+    /// последняя отметка в половине второго, сейчас пять. Метка «сейчас» обязана остаться
+    /// внутри полосы, а не уехать за правый край.
+    /// </summary>
+    [Fact]
+    public void NowStaysInsideEvenLongAfterTheLastPunch()
+    {
+        var day = Day(arrived: At(9), intervals: [Away(At(13), At(13, 30))]);
+        var band = DayBand.For(day, At(17), tickStep: 2);
+
+        Assert.Equal(At(17), band.Now);
+        Assert.True(band.To >= At(17));
+        Assert.InRange(band.Fraction(At(17)), 0d, 1d);
+    }
+
+    /// <summary>
+    /// Идущая отлучка рисуется паузой, а не работой. В сводку она не попадает — расчёт
+    /// берёт только закрытые, — и без неё полоса врала бы про работу до текущего момента.
+    /// </summary>
+    [Fact]
+    public void OngoingBreakIsNotDrawnAsWork()
+    {
+        var day = Day(arrived: At(9), intervals: [Away(At(11), At(11, 15))]);
+        var band = DayBand.For(day, At(17), tickStep: 2, pausedSince: At(13, 30));
+
+        var last = band.Segments[^1];
+
+        Assert.Equal(BandKind.OpenBreak, last.Kind);
+        Assert.Equal(At(13, 30), last.Start);
+        Assert.Equal(At(17), last.End);
+
+        // Работа перед паузой на месте и кончается там, где пауза началась.
+        var before = band.Segments[^2];
+        Assert.Equal(BandKind.Work, before.Kind);
+        Assert.Equal(At(13, 30), before.End);
+    }
+
+    /// <summary>Пауза прошлого дня полосу не занимает: там всё давно кончилось.</summary>
+    [Fact]
+    public void PastDayIgnoresAnOngoingBreak()
+    {
+        var day = Day(date: Today.AddDays(-1), arrived: At(9, 0, -1), left: At(18, 0, -1));
+        var band = DayBand.For(day, At(12), tickStep: 2, pausedSince: At(13, 0, -1));
+
+        Assert.DoesNotContain(band.Segments, segment => segment.Kind == BandKind.OpenBreak);
+    }
+
     private static BreakInterval Away(DateTimeOffset from, DateTimeOffset to) =>
         new(from, to, BreakKind.Paid, Guessed: false);
 

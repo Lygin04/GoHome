@@ -42,7 +42,7 @@ internal sealed class DayForm : DesignForm
     private readonly BreakEditor _editor;
     private readonly Confirmation _confirm;
 
-    private readonly FileSystemWatcher _watcher;
+    private readonly FileSystemWatcher? _watcher;
     private readonly System.Windows.Forms.Timer _settle;
 
     private DateOnly _date;
@@ -129,7 +129,10 @@ internal sealed class DayForm : DesignForm
 
         // Служба пишет в тот же файл, пока окно открыто. Держать прочитанное и записывать
         // поверх нельзя — значит, надо замечать чужую запись и перечитывать.
-        _settle = new System.Windows.Forms.Timer { Interval = 250 };
+        // Секунда, а не четверть: на одну запись слежение шлёт события пачкой, а каталог
+        // данных вполне может оказаться внутри папки синхронизации — тогда они пойдут
+        // сплошным потоком. Задержка их и гасит.
+        _settle = new System.Windows.Forms.Timer { Interval = 1000 };
         _settle.Tick += (_, _) =>
         {
             _settle.Stop();
@@ -153,7 +156,7 @@ internal sealed class DayForm : DesignForm
     {
         var now = _clock();
         var page = _service.OpenDay(_date, now);
-        var band = DayBand.For(page.Summary, now, TickStep);
+        var band = DayBand.For(page.Summary, now, TickStep, page.PausedSince);
 
         // Выбор держится за время, а не за номер строки: после правки строк может стать
         // меньше, и номер указал бы на чужой отрезок.
@@ -216,8 +219,12 @@ internal sealed class DayForm : DesignForm
         {
             // Наблюдатель держит хендл каталога и поток пула. Закрытое окно не должно
             // ни того ни другого.
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Dispose();
+            if (_watcher is not null)
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Dispose();
+            }
+
             _settle.Dispose();
         }
 
@@ -395,11 +402,12 @@ internal sealed class DayForm : DesignForm
 
     private void DeleteSelected()
     {
-        if (_list.SelectedBreak is { } interval && _service.RemoveBreak(_date, interval.Start))
+        if (_list.SelectedBreak is { } interval && _service.RemoveBreak(_date, interval.Start) is { } removed)
         {
-            // Удаление не отменяется: вернуть отметки, которых больше нет, нечем.
-            // Поэтому оно и спрашивает подтверждение, а отмена при этом очищается.
-            _undo = null;
+            // Отменяется возвратом ровно тех отметок, которые убрали, — они лежат в памяти
+            // сессии. Это откат конкретного удаления, а не создание отлучки из воздуха.
+            var date = _date;
+            _undo = () => _service.RestoreBreak(date, removed);
             _list.SelectedIndex = -1;
         }
 
@@ -435,35 +443,51 @@ internal sealed class DayForm : DesignForm
             new(at.Date.Add(time.ToTimeSpan()), at.Offset);
     }
 
-    /// <summary>Следит за чужой записью в файл дня.</summary>
-    private FileSystemWatcher Watch()
+    /// <summary>
+    /// Следит за чужой записью в файл дня.
+    /// </summary>
+    /// <remarks>
+    /// Единственным источником свежести слежение быть не может: события приходят пачками
+    /// на одну запись, иногда теряются вовсе, а в папке синхронизации сыплются постоянно.
+    /// Поэтому оно только ускоряет обновление, а надёжный источник — возвращение фокуса
+    /// в окно (<see cref="OnActivated"/>) и повторное открытие.
+    /// </remarks>
+    private FileSystemWatcher? Watch()
     {
-        var watcher = new FileSystemWatcher(_service.DataRoot, "*.json")
+        try
         {
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
-            EnableRaisingEvents = true,
-        };
-
-        // Событий на одну запись приходит несколько, и приходят они с чужого потока.
-        // Таймер сводит их в одно перечитывание на UI-потоке.
-        void Touched(object? sender, FileSystemEventArgs e)
-        {
-            if (IsHandleCreated && !IsDisposed)
+            var watcher = new FileSystemWatcher(_service.DataRoot, "*.json")
             {
-                BeginInvoke(() =>
+                // Только время записи: имя и размер добавляют событий, ничего не добавляя
+                // к ответу на вопрос «файл изменился».
+                NotifyFilter = NotifyFilters.LastWrite,
+                EnableRaisingEvents = true,
+            };
+
+            // Приходят с чужого потока. Таймер сводит пачку в одно перечитывание на UI-потоке.
+            void Touched(object? sender, FileSystemEventArgs e)
+            {
+                if (IsHandleCreated && !IsDisposed)
                 {
-                    _settle.Stop();
-                    _settle.Start();
-                });
+                    BeginInvoke(() =>
+                    {
+                        _settle.Stop();
+                        _settle.Start();
+                    });
+                }
             }
+
+            watcher.Changed += Touched;
+            watcher.Created += Touched;
+
+            return watcher;
         }
-
-        watcher.Changed += Touched;
-        watcher.Created += Touched;
-        watcher.Deleted += Touched;
-        watcher.Renamed += (_, e) => Touched(null, e);
-
-        return watcher;
+        catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or IOException)
+        {
+            // Каталога может не быть, а на сетевом диске слежение может быть недоступно.
+            // Без него окно продолжает обновляться при возвращении фокуса.
+            return null;
+        }
     }
 
     private void Relayout()
@@ -777,6 +801,11 @@ internal sealed class DayForm : DesignForm
                 _items.Add(("не засчитано", BandKind.UnpaidBreak));
             }
 
+            if (kinds.Contains(BandKind.OpenBreak))
+            {
+                _items.Add(("пауза идёт", BandKind.OpenBreak));
+            }
+
             Invalidate();
         }
 
@@ -916,7 +945,9 @@ internal sealed class DayForm : DesignForm
 
         /// <summary>Выбранная отлучка. У работы своих отметок в журнале нет.</summary>
         public BreakInterval? SelectedBreak =>
-            SelectedSegment is { Kind: not BandKind.Work } segment ? Interval(segment) : null;
+            SelectedSegment is { Kind: BandKind.PaidBreak or BandKind.UnpaidBreak } segment
+                ? Interval(segment)
+                : null;
 
         /// <summary>Возвращает выбор на отлучку с таким началом — после перечитывания дня.</summary>
         public void SelectBreakAt(DateTimeOffset? start)
@@ -944,11 +975,9 @@ internal sealed class DayForm : DesignForm
             _day = day;
             _edited = edited;
 
-            // У идущего дня последний отрезок не кончился: подписывать его временем конца
-            // было бы обещанием, что человек уже ушёл.
-            _openEnd = day.LeftAt is null && day.IsRunning && _segments.Count > 0
-                ? _segments[^1].End
-                : null;
+            // У незакрытого дня последний отрезок не кончился — что работа, что идущая
+            // пауза. Подписывать его временем конца было бы обещанием, что день закрыт.
+            _openEnd = day.LeftAt is null && _segments.Count > 0 ? _segments[^1].End : null;
 
             Count = _segments.Count;
         }
@@ -1048,6 +1077,7 @@ internal sealed class DayForm : DesignForm
         private string Title(BandSegment segment) => segment.Kind switch
         {
             BandKind.Work => "Работа",
+            BandKind.OpenBreak => "Пауза",
             BandKind.UnpaidBreak when IsLunch(segment) => "Обед",
             _ => "Отлучка",
         };
@@ -1058,6 +1088,12 @@ internal sealed class DayForm : DesignForm
             if (segment.Kind == BandKind.Work)
             {
                 return null;
+            }
+
+            // Идущая отлучка ещё ничем не стала, и править в ней нечего: её конца нет.
+            if (segment.Kind == BandKind.OpenBreak)
+            {
+                return ("идёт сейчас", false);
             }
 
             // «Правлено вручную» — про две разные вещи сразу: сдвинутые отметки журнала
@@ -1106,6 +1142,9 @@ internal sealed class DayForm : DesignForm
     {
         BandKind.Work => palette.Accent,
         BandKind.PaidBreak => Palette.Blend(palette.Accent, under, 0.42),
+
+        // Идущая отлучка тише не засчитанной: она ещё ничем не стала.
+        BandKind.OpenBreak => Palette.Blend(palette.Unpaid, under, 0.55),
         _ => palette.Unpaid,
     };
 

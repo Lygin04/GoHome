@@ -128,7 +128,18 @@ public sealed class GoHomeService
             .Select(punch => punch.At)
             .ToHashSet();
 
-        return new DayPage(Compute(log, now), log.IsUnreadable, _store.PathFor(date), edited);
+        var summary = Compute(log, now);
+
+        // Открытая отлучка есть только у дня, который идёт прямо сейчас, и только пока
+        // человек не вернулся. Её начало — последняя отметка ухода на перерыв.
+        var paused = summary.State == WorkState.OnBreak
+            ? log.Punches
+                .Where(punch => punch.Kind == PunchKind.BreakStart)
+                .Select(punch => (DateTimeOffset?)punch.At)
+                .LastOrDefault()
+            : null;
+
+        return new DayPage(summary, log.IsUnreadable, _store.PathFor(date), edited, paused);
     }
 
     /// <summary>
@@ -153,10 +164,27 @@ public sealed class GoHomeService
         return refusal;
     }
 
-    /// <summary>Убирает отлучку из журнала: время до и после неё смыкается в работу.</summary>
+    /// <summary>
+    /// Убирает отлучку из журнала: время до и после неё смыкается в работу.
+    /// </summary>
+    /// <returns>Убранное — чтобы можно было вернуть, — или <c>null</c>, если убирать нечего.</returns>
+    public RemovedBreak? RemoveBreak(DateOnly date, DateTimeOffset breakAt)
+    {
+        RemovedBreak? removed = null;
+
+        _store.TryUpdate(date, log =>
+        {
+            removed = BreakEdit.Remove(log, breakAt);
+            return removed is not null;
+        });
+
+        return removed;
+    }
+
+    /// <summary>Возвращает в журнал ровно то, что убрало <see cref="RemoveBreak"/>.</summary>
     /// <returns><c>true</c>, если журнал изменился.</returns>
-    public bool RemoveBreak(DateOnly date, DateTimeOffset breakAt) =>
-        _store.TryUpdate(date, log => BreakEdit.Remove(log, breakAt));
+    public bool RestoreBreak(DateOnly date, RemovedBreak removed) =>
+        _store.TryUpdate(date, log => BreakEdit.Restore(log, removed));
 
     /// <summary>
     /// Что мешает задать отлучке такие границы — чтобы показать это до попытки сохранить.

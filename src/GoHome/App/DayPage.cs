@@ -23,8 +23,14 @@ namespace GoHome.App;
 /// отметок не входит и входить не должно — оно ни на одну минуту не влияет. Но увидеть,
 /// откуда взялось время, не совпадающее с фактом, человек должен.
 /// </remarks>
+/// <param name="PausedSince">
+/// Начало отлучки, которая идёт прямо сейчас. В расчёт она не входит — чем окажется,
+/// станет ясно на возвращении, — но показать её надо: без неё полоса нарисовала бы работу
+/// от последней отметки до текущего момента.
+/// </param>
 public sealed record DayPage(
     DaySummary Summary,
     bool Unreadable,
     string Path,
-    IReadOnlySet<DateTimeOffset> Edited);
+    IReadOnlySet<DateTimeOffset> Edited,
+    DateTimeOffset? PausedSince);

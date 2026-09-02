@@ -82,7 +82,7 @@ public sealed class BreakEditTests
 
         Assert.NotNull(BreakEdit.Reject(log, At(13), At(13), At(13, 30)));
         Assert.False(BreakEdit.Move(log, At(13), At(13), At(13, 30)));
-        Assert.False(BreakEdit.Remove(log, At(13)));
+        Assert.Null(BreakEdit.Remove(log, At(13)));
     }
 
     /// <summary>Сдвиг границ меняет обе отметки и помечает их ручными.</summary>
@@ -125,7 +125,7 @@ public sealed class BreakEditTests
     {
         var log = Day();
 
-        Assert.True(BreakEdit.Remove(log, At(13)));
+        Assert.NotNull(BreakEdit.Remove(log, At(13)));
 
         Assert.DoesNotContain(log.Punches, punch => punch.At == At(13));
         Assert.DoesNotContain(log.Punches, punch => punch.At == At(13, 45));
@@ -140,7 +140,7 @@ public sealed class BreakEditTests
     {
         var log = Day().With(Paid(13), Unpaid(11));
 
-        Assert.True(BreakEdit.Remove(log, At(13)));
+        Assert.NotNull(BreakEdit.Remove(log, At(13)));
 
         var left = Assert.Single(log.Adjustments!);
         Assert.Equal(At(11), left.BreakAt);
@@ -154,8 +154,51 @@ public sealed class BreakEditTests
         var before = log.Punches.Count;
 
         Assert.False(BreakEdit.Move(log, At(15), At(15), At(15, 30)));
-        Assert.False(BreakEdit.Remove(log, At(15)));
+        Assert.Null(BreakEdit.Remove(log, At(15)));
         Assert.Equal(before, log.Punches.Count);
+    }
+
+    /// <summary>
+    /// Удаление отменяется возвратом ровно тех отметок, которые убрали.
+    /// </summary>
+    /// <remarks>
+    /// Это откат конкретной операции, а не создание отлучки: общей операции «добавить
+    /// перерыв» нет намеренно — ею можно было бы нарисовать перерыв, которого не было.
+    /// </remarks>
+    [Fact]
+    public void RemovalIsUndoneByPuttingTheSamePunchesBack()
+    {
+        var log = Day().With(Unpaid(13));
+        var before = log.Punches.ToList();
+
+        var removed = BreakEdit.Remove(log, At(13));
+        Assert.NotNull(removed);
+
+        Assert.True(BreakEdit.Restore(log, removed));
+
+        Assert.Equal(before.OrderBy(punch => punch.At), log.Punches);
+
+        // Поправка зачёта возвращается вместе с отметками.
+        var adjustment = Assert.Single(log.Adjustments!);
+        Assert.Equal(At(13), adjustment.BreakAt);
+        Assert.Equal(BreakKind.Unpaid, adjustment.Kind);
+    }
+
+    /// <summary>Занятое место возврат не занимает второй раз.</summary>
+    [Fact]
+    public void RestoreRefusesWhenTheSlotIsTaken()
+    {
+        var log = Day();
+
+        var removed = BreakEdit.Remove(log, At(13));
+        Assert.NotNull(removed);
+
+        // Пока отлучки не было, там записали другую.
+        log.Punches.Add(BreakStart(13, 10));
+        log.Punches.Add(BreakEnd(13, 20));
+
+        Assert.False(BreakEdit.Restore(log, removed));
+        Assert.DoesNotContain(log.Punches, punch => punch.At == At(13));
     }
 
     /// <summary>Допустимая правка проходит проверку.</summary>

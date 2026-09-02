@@ -13,6 +13,16 @@ internal enum BandKind
 
     /// <summary>Отлучка, не идущая в рабочее время: обед или отрезанная блокировка.</summary>
     UnpaidBreak,
+
+    /// <summary>
+    /// Отлучка, которая идёт прямо сейчас.
+    /// </summary>
+    /// <remarks>
+    /// В зачёт пока не идёт и в сводку дня не попадает: чем она окажется, станет ясно
+    /// на возвращении. Но нарисовать её работой нельзя — это ровно то враньё, ради
+    /// которого полоса и рисуется.
+    /// </remarks>
+    OpenBreak,
 }
 
 /// <summary>Отрезок полосы дня.</summary>
@@ -74,7 +84,15 @@ internal sealed record DayBand(
     /// <param name="day">Сводка.</param>
     /// <param name="now">Текущий момент.</param>
     /// <param name="tickStep">Через сколько часов ставить метки: 2 на широком окне, 3 на узком.</param>
-    public static DayBand For(DaySummary day, DateTimeOffset now, int tickStep)
+    /// <param name="pausedSince">
+    /// Начало отлучки, которая идёт прямо сейчас. В <paramref name="day"/> её нет: расчёт
+    /// берёт только закрытые отлучки, а эта ещё не кончилась.
+    /// </param>
+    public static DayBand For(
+        DaySummary day,
+        DateTimeOffset now,
+        int tickStep,
+        DateTimeOffset? pausedSince = null)
     {
         ArgumentNullException.ThrowIfNull(day);
         ArgumentOutOfRangeException.ThrowIfLessThan(tickStep, 1);
@@ -116,7 +134,7 @@ internal sealed record DayBand(
         return new DayBand(
             from,
             to,
-            Cut(arrived, last, day.Intervals),
+            Cut(arrived, last, day.Intervals, isToday ? pausedSince : null),
             Between(marker, from, to),
             Between(goal, from, to),
             TicksBetween(from, to, tickStep));
@@ -133,7 +151,8 @@ internal sealed record DayBand(
     private static List<BandSegment> Cut(
         DateTimeOffset arrived,
         DateTimeOffset last,
-        IReadOnlyList<BreakInterval> intervals)
+        IReadOnlyList<BreakInterval> intervals,
+        DateTimeOffset? pausedSince)
     {
         var segments = new List<BandSegment>();
         var cursor = arrived;
@@ -164,6 +183,20 @@ internal sealed record DayBand(
             }
 
             cursor = Later(cursor, end);
+        }
+
+        // Идущая отлучка обрывает работу там, где началась, и тянется до текущего момента.
+        if (pausedSince is { } paused && paused < last)
+        {
+            var began = Later(paused, cursor);
+
+            if (began > cursor)
+            {
+                segments.Add(new BandSegment(cursor, began, BandKind.Work));
+            }
+
+            segments.Add(new BandSegment(began, last, BandKind.OpenBreak));
+            return segments;
         }
 
         if (last > cursor)

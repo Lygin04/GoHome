@@ -153,12 +153,36 @@ public sealed class ConcurrentEditTests : IDisposable
         var before = service.OpenDay(Today, At(19)).Summary;
         var lunch = Assert.Single(before.Intervals);
 
-        Assert.True(service.RemoveBreak(Today, lunch.Start));
+        Assert.NotNull(service.RemoveBreak(Today, lunch.Start));
 
         var after = service.OpenDay(Today, At(19)).Summary;
 
         Assert.Empty(after.Intervals);
         Assert.True(after.Worked > before.Worked);
+    }
+
+    /// <summary>Отмена удаления возвращает ровно те отметки, которые были убраны.</summary>
+    [Fact]
+    public void RemovalIsUndoneThroughTheService()
+    {
+        var service = Service();
+
+        service.RecordReturn(At(9), "unlock");
+        service.RecordPause(At(13), TimeSpan.Zero, "lock");
+        service.RecordReturn(At(13, 45), "unlock");
+        service.RecordPause(At(18), TimeSpan.Zero, "lock");
+
+        var lunch = Assert.Single(service.OpenDay(Today, At(19)).Summary.Intervals);
+
+        var removed = service.RemoveBreak(Today, lunch.Start);
+        Assert.NotNull(removed);
+        Assert.Empty(service.OpenDay(Today, At(19)).Summary.Intervals);
+
+        Assert.True(service.RestoreBreak(Today, removed));
+
+        var back = Assert.Single(service.OpenDay(Today, At(19)).Summary.Intervals);
+        Assert.Equal(lunch.Start, back.Start);
+        Assert.Equal(lunch.End, back.End);
     }
 
     /// <summary>

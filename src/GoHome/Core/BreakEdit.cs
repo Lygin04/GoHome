@@ -108,15 +108,18 @@ public static class BreakEdit
     /// <summary>
     /// Убирает отлучку из журнала целиком: время до и после неё смыкается в работу.
     /// </summary>
-    /// <returns><c>true</c>, если журнал изменился.</returns>
-    public static bool Remove(DayLog log, DateTimeOffset breakAt)
+    /// <returns>
+    /// Убранное — отметки и поправка — или <c>null</c>, если убирать было нечего.
+    /// По этому же значению удаление и отменяется.
+    /// </returns>
+    public static RemovedBreak? Remove(DayLog log, DateTimeOffset breakAt)
     {
         ArgumentNullException.ThrowIfNull(log);
 
         var (opening, closing) = Pair(log, breakAt);
         if (opening is null || closing is null)
         {
-            return false;
+            return null;
         }
 
         log.Punches.Remove(opening);
@@ -124,10 +127,61 @@ public static class BreakEdit
 
         // Поправка к удалённой отлучке указывает в пустоту. Расчёт её и так игнорирует,
         // но копить мусор в файле, который человек читает глазами, незачем.
+        var adjustment = log.Adjustments?
+            .FirstOrDefault(item => item is not null && item.BreakAt.UtcTicks == breakAt.UtcTicks);
+
         log.Adjustments?.RemoveAll(
-            adjustment => adjustment is null || adjustment.BreakAt.UtcTicks == breakAt.UtcTicks);
+            item => item is null || item.BreakAt.UtcTicks == breakAt.UtcTicks);
+
+        return new RemovedBreak(opening, closing, adjustment);
+    }
+
+    /// <summary>
+    /// Возвращает в журнал ровно то, что убрало <see cref="Remove"/>.
+    /// </summary>
+    /// <remarks>
+    /// Это откат конкретного удаления, а не создание отлучки: вернуть можно только те
+    /// отметки, которые сами же и убрали. Общей операции «добавить перерыв» здесь нет
+    /// намеренно — ею можно было бы нарисовать перерыв, которого не было.
+    /// </remarks>
+    /// <returns><c>true</c>, если журнал изменился.</returns>
+    public static bool Restore(DayLog log, RemovedBreak removed)
+    {
+        ArgumentNullException.ThrowIfNull(log);
+        ArgumentNullException.ThrowIfNull(removed);
+
+        // Место могли занять, пока отлучки не было: служба дописывает в тот же файл,
+        // да и руками его правят. Тогда возвращать некуда.
+        if (Overlaps(log, removed))
+        {
+            return false;
+        }
+
+        log.Punches.Add(removed.Opening);
+        log.Punches.Add(removed.Closing);
+        log.Punches.Sort((one, other) => one.At.CompareTo(other.At));
+
+        if (removed.Adjustment is { } adjustment)
+        {
+            log.Adjustments ??= [];
+            log.Adjustments.Add(adjustment);
+        }
 
         return true;
+    }
+
+    /// <summary>Занято ли место, на которое возвращается отлучка.</summary>
+    private static bool Overlaps(DayLog log, RemovedBreak removed)
+    {
+        foreach (var (start, end) in Others(log, removed.Opening.At))
+        {
+            if (removed.Opening.At < end && start < removed.Closing.At)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Отметки начала и конца отлучки. Незакрытая отлучка даёт конец <c>null</c>.</summary>
