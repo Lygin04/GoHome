@@ -15,4 +15,16 @@ namespace GoHome.App;
 /// перезаписала бы файл, который не прочитался, и потеряла бы то, что в нём было.
 /// </param>
 /// <param name="Path">Путь к файлу дня — чтобы показать его в проводнике.</param>
-public sealed record DayPage(DaySummary Summary, bool Unreadable, string Path);
+/// <param name="Edited">
+/// Начала отлучек, отметки которых правил человек через форму дня.
+/// </param>
+/// <remarks>
+/// Правленые отмечаются отдельно от расчёта: в <see cref="DaySummary"/> происхождение
+/// отметок не входит и входить не должно — оно ни на одну минуту не влияет. Но увидеть,
+/// откуда взялось время, не совпадающее с фактом, человек должен.
+/// </remarks>
+public sealed record DayPage(
+    DaySummary Summary,
+    bool Unreadable,
+    string Path,
+    IReadOnlySet<DateTimeOffset> Edited);

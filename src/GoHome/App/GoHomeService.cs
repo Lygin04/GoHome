@@ -122,8 +122,51 @@ public sealed class GoHomeService
     public DayPage OpenDay(DateOnly date, DateTimeOffset now)
     {
         var log = _store.Load(date);
-        return new DayPage(Compute(log, now), log.IsUnreadable, _store.PathFor(date));
+
+        var edited = log.Punches
+            .Where(punch => punch.Kind == PunchKind.BreakStart && punch.Source == BreakEdit.ManualSource)
+            .Select(punch => punch.At)
+            .ToHashSet();
+
+        return new DayPage(Compute(log, now), log.IsUnreadable, _store.PathFor(date), edited);
     }
+
+    /// <summary>
+    /// Сдвигает границы отлучки.
+    /// </summary>
+    /// <returns>Причина отказа или <c>null</c>, если правка легла в журнал.</returns>
+    /// <remarks>
+    /// Проверка идёт под тем же замком и на том же свежепрочитанном журнале, что и запись.
+    /// Проверить заранее и записать потом — значит записать по устаревшей копии: служба
+    /// пишет в этот же файл, пока форма открыта.
+    /// </remarks>
+    public string? MoveBreak(DateOnly date, DateTimeOffset breakAt, DateTimeOffset start, DateTimeOffset end)
+    {
+        string? refusal = null;
+
+        _store.TryUpdate(date, log =>
+        {
+            refusal = BreakEdit.Reject(log, breakAt, start, end);
+            return refusal is null && BreakEdit.Move(log, breakAt, start, end);
+        });
+
+        return refusal;
+    }
+
+    /// <summary>Убирает отлучку из журнала: время до и после неё смыкается в работу.</summary>
+    /// <returns><c>true</c>, если журнал изменился.</returns>
+    public bool RemoveBreak(DateOnly date, DateTimeOffset breakAt) =>
+        _store.TryUpdate(date, log => BreakEdit.Remove(log, breakAt));
+
+    /// <summary>
+    /// Что мешает задать отлучке такие границы — чтобы показать это до попытки сохранить.
+    /// </summary>
+    /// <remarks>
+    /// Ответ здесь предварительный: решает всё равно <see cref="MoveBreak"/> на журнале,
+    /// прочитанном под замком. Между проверкой и сохранением журнал мог измениться.
+    /// </remarks>
+    public string? CheckBreak(DateOnly date, DateTimeOffset breakAt, DateTimeOffset start, DateTimeOffset end) =>
+        BreakEdit.Reject(_store.Load(date), breakAt, start, end);
 
     /// <summary>Сводка за последние дни, свежие сверху.</summary>
     public IReadOnlyList<DaySummary> History(DateTimeOffset now, int days)
