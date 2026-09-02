@@ -59,6 +59,9 @@ internal class DesignForm : Form, IPaletteAware
     /// <summary>Куда складывать содержимое окна. Полоса заголовка сюда не входит.</summary>
     protected Control Content => _content;
 
+    /// <summary>Размеры дизайна под текущий масштаб экрана.</summary>
+    protected Metrics Sizes => Metrics.Of(this);
+
     /// <inheritdoc/>
     [AllowNull]
     public override string Text

@@ -32,6 +32,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _autostartItem;
 
     private DateOnly _day;
+    private DayForm? _dayForm;
     private HistoryForm? _historyForm;
     private SettingsForm? _settingsForm;
     private bool _disposed;
@@ -66,8 +67,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _pauseItem.Click += (_, _) => TogglePause();
         _autostartItem.Click += (_, _) => ToggleAutostart();
 
-        var journalItem = new ToolStripMenuItem("Открыть журнал дня");
-        journalItem.Click += (_, _) => OpenDayJournal();
+        var dayItem = new ToolStripMenuItem("Открыть день");
+        dayItem.Click += (_, _) => ShowDay();
 
         var historyItem = new ToolStripMenuItem("История и статистика…");
         historyItem.Click += (_, _) => ShowHistory();
@@ -88,7 +89,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _cancelLunchItem,
             new ToolStripSeparator(),
             _pauseItem,
-            journalItem,
+            dayItem,
             historyItem,
             settingsItem,
             new ToolStripSeparator(),
@@ -98,7 +99,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Opening += (_, _) => Guard("открытие меню", () => UpdateMenu(_clock()));
 
         _notifyIcon.ContextMenuStrip = menu;
-        _notifyIcon.DoubleClick += (_, _) => ShowHistory();
+        // Левый щелчок открывает день сразу — правый по-прежнему разворачивает меню.
+        // Двойной щелчок ведёт туда же: окно одно, и открыть его дважды нельзя.
+        _notifyIcon.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                ShowDay();
+            }
+        };
 
         // У всплывающей подсказки нет кнопок, поэтому отмена — это щелчок по ней самой.
         // Тот же пункт лежит в меню и доступен до конца дня, а не пока висит уведомление.
@@ -306,32 +315,27 @@ public sealed class TrayApplicationContext : ApplicationContext
         Refresh(now);
     }
 
-    private void OpenDayJournal()
+    /// <summary>Открывает форму дня. Окно одно: второй щелчок поднимает уже открытое.</summary>
+    private void ShowDay(DateOnly? date = null)
     {
-        var now = _clock();
-        var target = _service.DayFileExists(now) ? _service.DayFilePath(now) : _service.DataRoot;
+        if (_dayForm is null || _dayForm.IsDisposed)
+        {
+            _dayForm = new DayForm(_service, _clock);
+            _dayForm.FormClosed += (_, _) => _dayForm = null;
+        }
 
-        try
+        if (date is { } day)
         {
-            Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            _dayForm.ShowDate(day);
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            // Для .json может не быть сопоставленной программы — открываем каталог.
-            TryOpen(_service.DataRoot);
-        }
-    }
 
-    private static void TryOpen(string path)
-    {
-        try
+        _dayForm.Show();
+        if (_dayForm.WindowState == FormWindowState.Minimized)
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            _dayForm.WindowState = FormWindowState.Normal;
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            // Показывать нечего — молча пропускаем.
-        }
+
+        _dayForm.Activate();
     }
 
     private void ShowHistory()
