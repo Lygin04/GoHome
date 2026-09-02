@@ -5,6 +5,7 @@ using GoHome.Core;
 using GoHome.Diagnostics;
 using GoHome.Interop;
 using GoHome.Storage;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
@@ -23,9 +24,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// <summary>Якорь на UI-потоке: события сессии приходят на своём.</summary>
     private readonly Control _uiThread;
 
-    private readonly ToolStripMenuItem _counterItem;
-    private readonly ToolStripMenuItem _arrivedItem;
-    private readonly ToolStripMenuItem _projectedItem;
+    private readonly TraySummary _summary;
+    private readonly ToolStripControlHost _summaryHost;
     private readonly ToolStripMenuItem _lunchItem;
     private readonly ToolStripMenuItem _cancelLunchItem;
     private readonly ToolStripMenuItem _pauseItem;
@@ -55,9 +55,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon { Text = "GoHome", Icon = AppIcon.ForTray };
         _ring = new TrayRing(_notifyIcon);
 
-        _counterItem = new ToolStripMenuItem { Enabled = false };
-        _arrivedItem = new ToolStripMenuItem { Enabled = false };
-        _projectedItem = new ToolStripMenuItem { Enabled = false };
+        // Сводка сверху отвечает на вопрос «сколько ещё» без открытия окна и платит
+        // за это высотой меню. Это осознанный выбор из двух вариантов дизайна.
+        _summary = new TraySummary();
         _lunchItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _cancelLunchItem = new ToolStripMenuItem("Вернуть обед в зачёт") { Visible = false };
         _pauseItem = new ToolStripMenuItem("Пауза");
@@ -76,26 +76,40 @@ public sealed class TrayApplicationContext : ApplicationContext
         var settingsItem = new ToolStripMenuItem("Настройки…");
         settingsItem.Click += (_, _) => ShowSettings();
 
-        var exitItem = new ToolStripMenuItem("Выход");
+        var exitItem = new ToolStripMenuItem("Выйти из GoHome") { Tag = MenuRenderer.DangerTag };
         exitItem.Click += (_, _) => ExitApplication();
 
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip
+        {
+            // Полоса под значками остаётся, хотя значков нет: в ней рисуется галочка
+            // автозапуска, а видимой она не будет — отрисовщик красит её в фон меню.
+            ShowImageMargin = true,
+            Renderer = new MenuRenderer(),
+        };
+
+        _summaryHost = new ToolStripControlHost(_summary)
+        {
+            AutoSize = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
+
         menu.Items.AddRange(
         [
-            _counterItem,
-            _arrivedItem,
-            _projectedItem,
-            _lunchItem,
-            _cancelLunchItem,
+            _summaryHost,
             new ToolStripSeparator(),
-            _pauseItem,
             dayItem,
             statsItem,
             settingsItem,
             new ToolStripSeparator(),
+            _lunchItem,
+            _cancelLunchItem,
+            _pauseItem,
+            new ToolStripSeparator(),
             _autostartItem,
             exitItem,
         ]);
+
         menu.Opening += (_, _) => Guard("открытие меню", () => UpdateMenu(_clock()));
 
         _notifyIcon.ContextMenuStrip = menu;
@@ -264,20 +278,12 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         var summary = Refresh(now);
 
-        _counterItem.Text = summary.State == WorkState.NotStarted
-            ? "День ещё не начат"
-            : $"Сегодня: {WorkTimeFormat.Duration(summary.Worked)} / {WorkTimeFormat.Duration(summary.Goal)}";
-
-        _arrivedItem.Text = $"Приход: {WorkTimeFormat.Clock(summary.ArrivedAt)}";
-
-        _projectedItem.Text = summary.State switch
-        {
-            WorkState.Working when summary.GoalReached => "Норма отработана",
-            WorkState.Working => $"Уход в {WorkTimeFormat.Clock(summary.ProjectedEnd)}",
-            WorkState.OnBreak => "Прогноз: пауза",
-            WorkState.Finished => $"Уход: {WorkTimeFormat.Clock(summary.LeftAt)}",
-            _ => "Прогноз: —",
-        };
+        // Ширина шапки задаётся здесь: меню считает свою по самому широкому пункту,
+        // а хозяин контрола о ней не знает.
+        var metrics = Metrics.Of(_summary);
+        _summary.Size = new Size(metrics.Scale(296), _summary.PreferredHeight);
+        _summaryHost.Size = _summary.Size;
+        _summary.Show(summary);
 
         var unpaid = summary.UnpaidIntervals.ToList();
         _lunchItem.Visible = unpaid.Count > 0;
@@ -295,7 +301,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _cancelLunchItem.Text = $"Вернуть {WorkTimeFormat.Interval(guessed)} в зачёт";
         }
 
-        _pauseItem.Text = summary.State == WorkState.Working ? "Пауза" : "Продолжить";
+        _pauseItem.Text = summary.State == WorkState.Working ? "Приостановить учёт" : "Продолжить учёт";
         _pauseItem.Enabled = summary.State != WorkState.NotStarted || !WorkstationState.IsLocked();
         _autostartItem.Checked = Autostart.IsEnabled();
     }
