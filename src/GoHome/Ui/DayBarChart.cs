@@ -41,6 +41,9 @@ internal sealed class DayBarChart : Control
     }
 
     /// <summary>Показывает период. Пустой период — это тоже период, и рисуется он молча.</summary>
+    /// <summary>Двойной щелчок по дню: его открывает форма дня.</summary>
+    public event EventHandler<DateOnly>? DayActivated;
+
     public void Display(PeriodStats stats, Palette palette)
     {
         _stats = stats;
@@ -158,10 +161,14 @@ internal sealed class DayBarChart : Control
             TextRenderer.DrawText(
                 graphics,
                 hour.ToString(CultureInfo.InvariantCulture) + " ч",
-                Font,
+                Typography.Of(this).Tick,
                 new Rectangle(0, y - LogicalToDeviceUnits(9), plot.Left - LogicalToDeviceUnits(6), LogicalToDeviceUnits(18)),
                 _palette.Muted,
-                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Right
+                    | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.NoPadding
+                    | TextFormatFlags.SingleLine
+                    | TextFormatFlags.NoPrefix);
         }
     }
 
@@ -247,7 +254,9 @@ internal sealed class DayBarChart : Control
     /// <summary>Подпись дня. В месяце подписи не влезают все — тогда остаются опорные числа.</summary>
     private void DrawDayLabel(Graphics graphics, DaySummary day, int left, int width, double slot, Rectangle plot)
     {
-        var crowded = slot < LogicalToDeviceUnits(26);
+        // Тридцать четыре, а не двадцать шесть: «ср 12» моноширинными занимает больше,
+        // чем занимала системная подпись, и на месяце подписи начинали налезать.
+        var crowded = slot < LogicalToDeviceUnits(34);
         if (crowded && day.Date.Day != 1 && day.Date.Day % 5 != 0)
         {
             return;
@@ -260,7 +269,7 @@ internal sealed class DayBarChart : Control
         TextRenderer.DrawText(
             graphics,
             text,
-            Font,
+            Typography.Of(this).Small,
             new Rectangle(left - LogicalToDeviceUnits(10), plot.Bottom + LogicalToDeviceUnits(3), width + LogicalToDeviceUnits(20), LogicalToDeviceUnits(16)),
             day.IsDayOff ? _palette.Muted : _palette.Ink,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
@@ -270,7 +279,7 @@ internal sealed class DayBarChart : Control
         TextRenderer.DrawText(
             graphics,
             text,
-            Font,
+            Typography.Of(this).Body,
             plot,
             _palette.Muted,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
@@ -295,6 +304,19 @@ internal sealed class DayBarChart : Control
         path.AddLine(box.Right, box.Bottom, box.Left, box.Bottom);
         path.CloseFigure();
         return path;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        ArgumentNullException.ThrowIfNull(e);
+
+        if (e.Button == MouseButtons.Left && _stats is { } stats && IndexAt(e.X) is var index and >= 0
+            && index < stats.Days.Count)
+        {
+            DayActivated?.Invoke(this, stats.Days[index].Date);
+        }
     }
 
     private int IndexAt(int x)

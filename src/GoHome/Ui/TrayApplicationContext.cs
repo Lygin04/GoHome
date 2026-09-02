@@ -33,7 +33,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private DateOnly _day;
     private DayForm? _dayForm;
-    private HistoryForm? _historyForm;
+    private StatsForm? _statsForm;
     private SettingsForm? _settingsForm;
     private bool _disposed;
 
@@ -70,8 +70,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         var dayItem = new ToolStripMenuItem("Открыть день");
         dayItem.Click += (_, _) => ShowDay();
 
-        var historyItem = new ToolStripMenuItem("История и статистика…");
-        historyItem.Click += (_, _) => ShowHistory();
+        var statsItem = new ToolStripMenuItem("Статистика…");
+        statsItem.Click += (_, _) => ShowStats();
 
         var settingsItem = new ToolStripMenuItem("Настройки…");
         settingsItem.Click += (_, _) => ShowSettings();
@@ -90,7 +90,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             new ToolStripSeparator(),
             _pauseItem,
             dayItem,
-            historyItem,
+            statsItem,
             settingsItem,
             new ToolStripSeparator(),
             _autostartItem,
@@ -338,21 +338,25 @@ public sealed class TrayApplicationContext : ApplicationContext
         _dayForm.Activate();
     }
 
-    private void ShowHistory()
+    private void ShowStats()
     {
-        if (_historyForm is null || _historyForm.IsDisposed)
+        if (_statsForm is null || _statsForm.IsDisposed)
         {
-            _historyForm = new HistoryForm(_service, _clock);
-            _historyForm.FormClosed += (_, _) => _historyForm = null;
+            _statsForm = new StatsForm(_service, _clock);
+
+            // Окно дня одно на приложение, поэтому открывает его трей, а не статистика:
+            // иначе у каждого окна завелась бы своя копия формы дня.
+            _statsForm.DayRequested += (_, date) => ShowDay(date);
+            _statsForm.FormClosed += (_, _) => _statsForm = null;
         }
 
-        _historyForm.Show();
-        if (_historyForm.WindowState == FormWindowState.Minimized)
+        _statsForm.Show();
+        if (_statsForm.WindowState == FormWindowState.Minimized)
         {
-            _historyForm.WindowState = FormWindowState.Normal;
+            _statsForm.WindowState = FormWindowState.Normal;
         }
 
-        _historyForm.Activate();
+        _statsForm.Activate();
     }
 
     private void ShowSettings()
@@ -370,7 +374,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _settingsForm.Saved += (_, _) =>
             {
                 Refresh(_clock());
-                _historyForm?.Reload();
+                _statsForm?.Reload();
             };
         }
 
@@ -533,7 +537,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _notifyIcon.ContextMenuStrip?.Dispose();
             _notifyIcon.Dispose();
 
-            _historyForm?.Dispose();
+            _statsForm?.Dispose();
             _settingsForm?.Dispose();
             _uiThread.Dispose();
         }

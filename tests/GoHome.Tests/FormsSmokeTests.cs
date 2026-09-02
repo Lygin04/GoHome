@@ -42,7 +42,7 @@ public sealed class FormsSmokeTests : IDisposable
     }
 
     [Fact]
-    public void Окно_истории_собирается_на_дне_с_перерывами()
+    public void Окно_статистики_собирается_на_дне_с_перерывами()
     {
         Run(service =>
         {
@@ -50,7 +50,7 @@ public sealed class FormsSmokeTests : IDisposable
             service.RecordPause(At(13), TimeSpan.Zero, "lock");
             service.RecordReturn(At(13, 45), "unlock");
 
-            using var form = new HistoryForm(service, () => At(15));
+            using var form = Stats(service, At(15));
             Assert.NotEqual(nint.Zero, form.Handle);
 
             form.Reload();
@@ -58,14 +58,14 @@ public sealed class FormsSmokeTests : IDisposable
     }
 
     [Fact]
-    public void Окно_истории_собирается_на_нерабочем_дне()
+    public void Окно_статистики_собирается_на_нерабочем_дне()
     {
         Run(
             service =>
             {
                 service.RecordReturn(At(9), "unlock");
 
-                using var form = new HistoryForm(service, () => At(13));
+                using var form = Stats(service, At(13));
                 Assert.NotEqual(nint.Zero, form.Handle);
             },
             AppSettings.Default with { Schedule = Flat(null) });
@@ -87,37 +87,81 @@ public sealed class FormsSmokeTests : IDisposable
     }
 
     [Fact]
-    public void Панель_статистики_собирается_и_перечитывается()
+    public void Статистика_досчитывается_и_доезжает_до_окна()
     {
         Run(service =>
         {
             service.RecordReturn(At(9), "unlock");
 
-            using var panel = new StatsPanel(service, () => At(13)) { Size = new Size(760, 420) };
-            Assert.NotEqual(nint.Zero, panel.Handle);
+            using var form = Stats(service, At(13));
 
-            panel.Reload();
+            // Ответ возвращается в UI-поток, поэтому без насоса сообщений он не доедет.
+            Assert.True(
+                Pump(() => form.Controls.Count > 0 && form.Text.Contains("Статистика", StringComparison.Ordinal)),
+                "статистика не доехала до окна");
         });
     }
 
+    /// <summary>Щелчок по дню в статистике просит открыть форму дня.</summary>
     [Fact]
-    public void Статистика_досчитывается_и_доезжает_до_панели()
+    public void Статистика_просит_открыть_день()
     {
         Run(service =>
         {
             service.RecordReturn(At(9), "unlock");
+            service.RecordPause(At(18), TimeSpan.Zero, "lock");
 
-            using var panel = new StatsPanel(service, () => At(13)) { Size = new Size(760, 420) };
+            using var form = Stats(service, At(19));
+            Assert.True(Pump(() => form.Text.Contains("Статистика", StringComparison.Ordinal)));
 
-            // Даём фоновому чтению закончиться раньше, чем появится хендл: вернуть ответ
-            // в UI-поток в этот момент некуда, и он пропадает. Панель обязана посчитать заново.
-            Thread.Sleep(150);
-            Assert.False(panel.IsHandleCreated);
-            Assert.NotEqual(nint.Zero, panel.Handle);
+            DateOnly? asked = null;
+            form.DayRequested += (_, date) => asked = date;
 
-            // Ответ возвращается в UI-поток, поэтому без насоса сообщений он не доедет.
-            Assert.True(Pump(() => panel.Ready), "статистика не доехала до панели");
+            var list = form.Controls
+                .OfType<Control>()
+                .SelectMany(Descendants)
+                .OfType<DesignList>()
+                .First();
+
+            list.SelectedIndex = 0;
+
+            // Enter на выбранной строке — тем же сообщением, каким его шлёт система.
+            SendMessageW(list.Handle, WmKeyDown, (nint)Keys.Enter, 0);
+
+            Assert.Equal(Today, asked);
         });
+    }
+
+    private const int WmKeyDown = 0x0100;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint SendMessageW(nint hWnd, int msg, nint wParam, nint lParam);
+
+    private static IEnumerable<Control> Descendants(Control root)
+    {
+        yield return root;
+        foreach (Control child in root.Controls)
+        {
+            foreach (var deeper in Descendants(child))
+            {
+                yield return deeper;
+            }
+        }
+    }
+
+    /// <summary>Окно статистики за пределами экрана: показанное, но не мешающее.</summary>
+    private static StatsForm Stats(GoHomeService service, DateTimeOffset now)
+    {
+        var form = new StatsForm(service, () => now)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(-4000, -4000),
+            ShowInTaskbar = false,
+        };
+
+        form.Show();
+        Application.DoEvents();
+        return form;
     }
 
     [Fact]

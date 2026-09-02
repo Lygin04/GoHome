@@ -659,7 +659,7 @@ internal sealed class DayForm : DesignForm
                 title,
                 new Rectangle(0, 0, Width, title.Height),
                 palette.Ink,
-                Flags);
+                Flat);
 
             var noteTop = title.Height + metrics.Scale(2);
             var width = TextRenderer.MeasureText(_note, fonts.Note, Size.Empty, TextFormatFlags.NoPadding).Width;
@@ -670,7 +670,7 @@ internal sealed class DayForm : DesignForm
                 fonts.Note,
                 new Rectangle(0, noteTop, Width, fonts.Note.Height),
                 palette.Muted,
-                Flags);
+                Flat);
 
             if (_state.Length > 0)
             {
@@ -680,7 +680,7 @@ internal sealed class DayForm : DesignForm
                     fonts.Note,
                     new Rectangle(width, noteTop, Math.Max(0, Width - width), fonts.Note.Height),
                     _state == "идёт сейчас" ? palette.Accent : palette.Faint,
-                    Flags);
+                    Flat);
             }
         }
     }
@@ -712,8 +712,8 @@ internal sealed class DayForm : DesignForm
             var counter = _narrow ? fonts.CounterNarrow : fonts.Counter;
             var worked = WorkTimeFormat.Duration(day.Worked);
 
-            TextRenderer.DrawText(graphics, worked, counter, new Point(0, 0), palette.Ink, NoPad);
-            var width = TextRenderer.MeasureText(worked, counter, Size.Empty, NoPad).Width;
+            TextRenderer.DrawText(graphics, worked, counter, new Point(0, 0), palette.Ink, Tight);
+            var width = TextRenderer.MeasureText(worked, counter, Size.Empty, Tight).Width;
 
             if (!day.IsDayOff)
             {
@@ -726,7 +726,7 @@ internal sealed class DayForm : DesignForm
                     small,
                     new Point(width + metrics.Scale(2), counter.Height - small.Height - metrics.Scale(4)),
                     palette.Faint,
-                    NoPad);
+                    Tight);
             }
 
             // Прогноз ухода — только у идущего дня: у закрытого уходить уже некуда.
@@ -750,8 +750,8 @@ internal sealed class DayForm : DesignForm
             Color colour)
         {
             var big = _narrow ? fonts.ProjectionNarrow : fonts.Projection;
-            var captionSize = TextRenderer.MeasureText(caption, fonts.Note, Size.Empty, NoPad);
-            var valueSize = TextRenderer.MeasureText(value, big, Size.Empty, NoPad);
+            var captionSize = TextRenderer.MeasureText(caption, fonts.Note, Size.Empty, Tight);
+            var valueSize = TextRenderer.MeasureText(value, big, Size.Empty, Tight);
             var right = Width;
 
             TextRenderer.DrawText(
@@ -760,7 +760,7 @@ internal sealed class DayForm : DesignForm
                 fonts.Note,
                 new Point(right - captionSize.Width, 0),
                 palette.Muted,
-                NoPad);
+                Tight);
 
             TextRenderer.DrawText(
                 graphics,
@@ -768,7 +768,7 @@ internal sealed class DayForm : DesignForm
                 big,
                 new Point(right - valueSize.Width, captionSize.Height + metrics.Scale(2)),
                 colour,
-                NoPad);
+                Tight);
         }
     }
 
@@ -824,14 +824,14 @@ internal sealed class DayForm : DesignForm
 
                 x += marker + metrics.Scale(6);
 
-                var size = TextRenderer.MeasureText(text, fonts.Caption, Size.Empty, NoPad);
+                var size = TextRenderer.MeasureText(text, fonts.Caption, Size.Empty, Tight);
                 TextRenderer.DrawText(
                     graphics,
                     text,
                     fonts.Caption,
                     new Point(x, (Height - size.Height) / 2),
                     palette.Muted,
-                    NoPad);
+                    Tight);
 
                 x += size.Width + metrics.Space(4);
             }
@@ -893,7 +893,7 @@ internal sealed class DayForm : DesignForm
                     fonts.Note,
                     new Rectangle(0, y, Width, fonts.Body.Height),
                     palette.Muted,
-                    Flags);
+                    Flat);
 
                 TextRenderer.DrawText(
                     graphics,
@@ -901,7 +901,7 @@ internal sealed class DayForm : DesignForm
                     fonts.Number,
                     new Rectangle(0, y, Width, fonts.Body.Height),
                     colour ?? palette.Ink,
-                    Flags | TextFormatFlags.Right);
+                    Flat | TextFormatFlags.Right);
 
                 y += lineHeight;
             }
@@ -1020,7 +1020,7 @@ internal sealed class DayForm : DesignForm
 
             var title = Title(segment);
             var body = narrow ? fonts.Note : fonts.Body;
-            var titleWidth = TextRenderer.MeasureText(title, body, Size.Empty, NoPad).Width;
+            var titleWidth = TextRenderer.MeasureText(title, body, Size.Empty, Tight).Width;
 
             TextRenderer.DrawText(
                 graphics,
@@ -1127,11 +1127,6 @@ internal sealed class DayForm : DesignForm
     }
 
     // ---- мелочи --------------------------------------------------------------------
-
-    private const TextFormatFlags Flags = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis;
-    private const TextFormatFlags NoPad = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
-    private const TextFormatFlags Middle =
-        TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis;
 
     /// <summary>
     /// Цвет отрезка. Засчитанная отлучка — акцент при 0.42, и смешивать его надо с тем
@@ -1267,37 +1262,5 @@ internal sealed class DayForm : DesignForm
                 palette.Ink,
                 TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
         }
-    }
-
-    /// <summary>Полотно, которое рисует себя само и берёт фон у родителя.</summary>
-    private abstract class DrawnPanel : Control
-    {
-        protected DrawnPanel()
-        {
-            SetStyle(
-                ControlStyles.AllPaintingInWmPaint
-                    | ControlStyles.UserPaint
-                    | ControlStyles.OptimizedDoubleBuffer
-                    | ControlStyles.ResizeRedraw,
-                true);
-
-            TabStop = false;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            ArgumentNullException.ThrowIfNull(e);
-
-            var palette = Palette.Current();
-            using (var back = new SolidBrush(Parent?.BackColor ?? palette.Window))
-            {
-                e.Graphics.FillRectangle(back, ClientRectangle);
-            }
-
-            var metrics = Metrics.Of(this);
-            Render(e.Graphics, palette, metrics, Typography.Of(metrics));
-        }
-
-        protected abstract void Render(Graphics graphics, Palette palette, Metrics metrics, Typography fonts);
     }
 }

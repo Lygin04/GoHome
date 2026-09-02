@@ -31,6 +31,15 @@ internal abstract class DesignControl : Control
         TabStop = true;
     }
 
+    /// <inheritdoc cref="Draw.Flat"/>
+    protected const TextFormatFlags Flat = Draw.Flat;
+
+    /// <inheritdoc cref="Draw.Tight"/>
+    protected const TextFormatFlags Tight = Draw.Tight;
+
+    /// <inheritdoc cref="Draw.Middle"/>
+    protected const TextFormatFlags Middle = Draw.Middle;
+
     /// <summary>Палитра, действующая прямо сейчас.</summary>
     protected static Palette Colors => Palette.Current();
 

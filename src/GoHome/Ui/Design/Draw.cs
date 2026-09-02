@@ -25,6 +25,21 @@ internal enum Chevron
 /// </remarks>
 internal static class Draw
 {
+    /// <summary>
+    /// Обычные правила разметки текста: без подчёркиваний по амперсанду и с многоточием.
+    /// </summary>
+    /// <remarks>
+    /// Подчёркивание по амперсанду в нарисованном тексте не нужно нигде: ускорителей у него
+    /// нет, а адрес файла с амперсандом превратился бы в подчёркнутую букву.
+    /// </remarks>
+    public const TextFormatFlags Flat = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis;
+
+    /// <summary>То же, но без отступов, которые TextRenderer добавляет по краям.</summary>
+    public const TextFormatFlags Tight = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+
+    /// <summary>То же, что <see cref="Flat"/>, по центру строки.</summary>
+    public const TextFormatFlags Middle = TextFormatFlags.VerticalCenter | Flat;
+
     /// <summary>Скруглённый прямоугольник как контур.</summary>
     public static GraphicsPath RoundedPath(Rectangle bounds, int radius)
     {

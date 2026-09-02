@@ -39,6 +39,9 @@ internal sealed class YearHeatGrid : Control
     }
 
     /// <summary>Показывает год.</summary>
+    /// <summary>Двойной щелчок по дню: его открывает форма дня.</summary>
+    public event EventHandler<DateOnly>? DayActivated;
+
     public void Display(PeriodStats stats, Palette palette)
     {
         _stats = stats;
@@ -145,7 +148,7 @@ internal sealed class YearHeatGrid : Control
             TextRenderer.DrawText(
                 graphics,
                 name,
-                Font,
+                Typography.Of(this).Tick,
                 new Rectangle(0, layout.Top + (row * layout.Cell), layout.Left - layout.Gap, layout.Cell),
                 _palette.Muted,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
@@ -169,7 +172,7 @@ internal sealed class YearHeatGrid : Control
             TextRenderer.DrawText(
                 graphics,
                 Russian.DateTimeFormat.AbbreviatedMonthNames[month - 1],
-                Font,
+                Typography.Of(this).Small,
                 new Rectangle(box.Left, 0, layout.Cell * 4, layout.Top),
                 _palette.Muted,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
@@ -184,7 +187,9 @@ internal sealed class YearHeatGrid : Control
     {
         if (day.Worked <= TimeSpan.Zero)
         {
-            return day.IsDayOff ? _palette.Unpaid : _palette.HeatEmpty;
+            // Нерабочий день без работы — самая тихая клетка: он не пропущен, в нём просто
+            // нечего было делать. Пропущенный рабочий день заметнее — это дыра в графике.
+            return day.IsDayOff ? _palette.HeatEmpty : _palette.Heat[0];
         }
 
         var share = day.Goal > TimeSpan.Zero
@@ -204,6 +209,18 @@ internal sealed class YearHeatGrid : Control
             layout.Top + (row * layout.Cell),
             layout.Cell - layout.Gap,
             layout.Cell - layout.Gap);
+    }
+
+    /// <inheritdoc/>
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        ArgumentNullException.ThrowIfNull(e);
+
+        if (e.Button == MouseButtons.Left && DateAt(e.Location) is { } date)
+        {
+            DayActivated?.Invoke(this, date);
+        }
     }
 
     private DateOnly? DateAt(Point point)

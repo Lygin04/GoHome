@@ -91,8 +91,17 @@ internal abstract class DesignList : DesignControl
     /// <summary>Отступ содержимого строки от края списка.</summary>
     protected int RowPadding => Sizes.Space(3);
 
+    /// <summary>
+    /// Высота шапки таблицы. Ноль — шапки нет.
+    /// </summary>
+    /// <remarks>
+    /// Шапка не строка: она не выбирается, не подсвечивается под курсором и не уезжает
+    /// при прокрутке. Поэтому она и живёт здесь, а не первой строкой списка.
+    /// </remarks>
+    protected virtual int HeaderHeight => 0;
+
     /// <summary>Весь список помещается целиком, прокручивать нечего.</summary>
-    protected bool FitsWhole => _count * RowHeight <= Height;
+    protected bool FitsWhole => _count * RowHeight <= Math.Max(0, Height - HeaderHeight);
 
     /// <summary>Цвет обычного текста строки: на выделенной он другой.</summary>
     protected static Color RowInk(Palette palette, RowState state) =>
@@ -101,6 +110,11 @@ internal abstract class DesignList : DesignControl
     /// <summary>Цвет тихого текста строки — чисел и времени.</summary>
     protected static Color RowMuted(Palette palette, RowState state) =>
         state.Selected ? palette.SelectionInk : palette.Muted;
+
+    /// <summary>Рисует шапку таблицы. Вызывается только при ненулевой <see cref="HeaderHeight"/>.</summary>
+    protected virtual void PaintHeader(Graphics graphics, Rectangle bounds, Palette palette)
+    {
+    }
 
     /// <summary>Рисует содержимое одной строки. Подложку и разделитель список рисует сам.</summary>
     /// <param name="graphics">Куда рисовать.</param>
@@ -130,12 +144,19 @@ internal abstract class DesignList : DesignControl
             e.Graphics.FillRectangle(back, ClientRectangle);
         }
 
+        var header = HeaderHeight;
+        var view = Math.Max(0, Height - header);
+
         var first = Math.Max(0, _offset / row);
-        var last = Math.Min(_count - 1, (_offset + Height) / row);
+        var last = Math.Min(_count - 1, (_offset + view) / row);
+
+        // Строки обрезаются шапкой: уезжающая вверх строка не должна её перечёркивать.
+        var saved = e.Graphics.Save();
+        e.Graphics.SetClip(new Rectangle(0, header, Width, view));
 
         for (var index = first; index <= last; index++)
         {
-            var bounds = new Rectangle(0, (index * row) - _offset, Width, row);
+            var bounds = new Rectangle(0, header + (index * row) - _offset, Width, row);
             var state = new RowState(
                 Hovered: index == _hover && Enabled,
                 Selected: index == SelectedIndex,
@@ -177,6 +198,13 @@ internal abstract class DesignList : DesignControl
                 // Внутрь: наружный контур перекрыла бы соседняя строка.
                 Draw.Focus(e.Graphics, bounds, palette.Accent, metrics, inside: true);
             }
+        }
+
+        e.Graphics.Restore(saved);
+
+        if (header > 0)
+        {
+            PaintHeader(e.Graphics, new Rectangle(0, 0, Width, header), palette);
         }
     }
 
@@ -273,12 +301,12 @@ internal abstract class DesignList : DesignControl
 
             case Keys.PageDown:
                 e.Handled = true;
-                Choose(SelectedIndex + Math.Max(1, Height / RowHeight));
+                Choose(SelectedIndex + Page);
                 return;
 
             case Keys.PageUp:
                 e.Handled = true;
-                Choose(SelectedIndex - Math.Max(1, Height / RowHeight));
+                Choose(SelectedIndex - Page);
                 return;
         }
 
@@ -306,15 +334,19 @@ internal abstract class DesignList : DesignControl
         }
     }
 
+    /// <summary>Сколько строк умещается на экран — шаг для Page Up и Page Down.</summary>
+    private int Page => Math.Max(1, Math.Max(0, Height - HeaderHeight) / RowHeight);
+
     /// <summary>Номер строки под точкой. Минус один — мимо всех.</summary>
     private int IndexAt(Point point)
     {
-        if (_count == 0 || point.Y < 0)
+        var header = HeaderHeight;
+        if (_count == 0 || point.Y < header)
         {
             return -1;
         }
 
-        var index = (point.Y + _offset) / RowHeight;
+        var index = (point.Y - header + _offset) / RowHeight;
         return index >= 0 && index < _count ? index : -1;
     }
 
@@ -342,6 +374,7 @@ internal abstract class DesignList : DesignControl
             return;
         }
 
+        var view = Math.Max(0, Height - HeaderHeight);
         var top = index * RowHeight;
         var bottom = top + RowHeight;
 
@@ -349,14 +382,16 @@ internal abstract class DesignList : DesignControl
         {
             _offset = top;
         }
-        else if (bottom > _offset + Height)
+        else if (bottom > _offset + view)
         {
-            _offset = bottom - Height;
+            _offset = bottom - view;
         }
 
         ClampOffset();
     }
 
     private void ClampOffset() =>
-        _offset = Math.Max(0, Math.Min(_offset, Math.Max(0, (_count * RowHeight) - Height)));
+        _offset = Math.Max(
+            0,
+            Math.Min(_offset, Math.Max(0, (_count * RowHeight) - Math.Max(0, Height - HeaderHeight))));
 }
