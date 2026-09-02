@@ -47,6 +47,16 @@ internal sealed class Palette
     /// <summary>Незаполненная часть полосы — дня в форме дня и прогресса в меню трея.</summary>
     public required Color Track { get; init; }
 
+    /// <summary>
+    /// Утопленная подложка: жёлоб сегментированных вкладок.
+    /// </summary>
+    /// <remarks>
+    /// Отдельная роль, а не «поле» или «мягкая линия»: «утоплено» в тёмной теме светлее фона,
+    /// а в светлой темнее, и вычислить одно из другого нельзя. Контрол, который выбирал бы
+    /// между двумя ролями по теме, завёл бы второй источник правды о том, какая тема идёт.
+    /// </remarks>
+    public required Color Well { get; init; }
+
     // ---- текст ---------------------------------------------------------------------
 
     /// <summary>Основной текст.</summary>
@@ -182,6 +192,7 @@ internal sealed class Palette
         Sidebar = Rgb(0x171B21),
         SidebarHover = Rgb(0x1F242B),
         Track = Rgb(0x272C34),
+        Well = Rgb(0x232830),
 
         Ink = Rgb(0xE6EAF0),
         Muted = Rgb(0x8B96A5),
@@ -260,6 +271,7 @@ internal sealed class Palette
         Sidebar = Rgb(0xEAEDF1),
         SidebarHover = Rgb(0xE3E7EC),
         Track = Rgb(0xE8EBEF),
+        Well = Rgb(0xE9ECF0),
 
         Ink = Rgb(0x171A1F),
         Muted = Rgb(0x606A78),
@@ -400,6 +412,7 @@ internal sealed class Palette
             Sidebar = control,
             SidebarHover = highlight,
             Track = control,
+            Well = control,
 
             Ink = text,
             Muted = text,
