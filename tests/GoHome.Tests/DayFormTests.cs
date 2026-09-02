@@ -15,7 +15,7 @@ namespace GoHome.Tests;
 /// нерабочий день, прошлый день, день через полночь и неразобравшийся файл. Ошибка в любом
 /// из них — либо деление на ноль, либо окно, обещающее то, чего в этом дне быть не может.
 /// </remarks>
-[Collection(UiThemeCollection.Name)]
+[Collection(UiCollection.Name)]
 public sealed class DayFormTests : IDisposable
 {
     private readonly string _root = Path.Combine(

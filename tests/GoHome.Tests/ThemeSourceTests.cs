@@ -6,14 +6,18 @@ using GoHome.Ui.Design;
 namespace GoHome.Tests;
 
 /// <summary>
-/// Оформление приложения задаётся из одного места на процесс, поэтому проверки, его
-/// трогающие, идут по очереди: параллельные тесты иначе перекрывают друг другу тему.
+/// Очередь для всего, что трогает окна.
 /// </summary>
+/// <remarks>
+/// Две причины, и обе про общее на процесс состояние. Оформление задаётся один раз
+/// на приложение, и параллельные тесты перекрывали бы друг другу тему. Объекты GDI
+/// считаются тоже на весь процесс, и чужое окно, созданное рядом, ломает счёт утечек.
+/// </remarks>
 [CollectionDefinition(Name)]
-public sealed class UiThemeCollection
+public sealed class UiCollection
 {
     /// <summary>Имя очереди.</summary>
-    public const string Name = "оформление приложения";
+    public const string Name = "окна и рисование";
 }
 
 /// <summary>
@@ -25,7 +29,7 @@ public sealed class UiThemeCollection
 /// обещание, которого приложение не держит; кольцо, следующее за настройкой, становится
 /// невидимым на панели противоположного оформления.
 /// </remarks>
-[Collection(UiThemeCollection.Name)]
+[Collection(UiCollection.Name)]
 public sealed class ThemeSourceTests : IDisposable
 {
     public void Dispose() => WindowTheme.Apply(AppTheme.System);

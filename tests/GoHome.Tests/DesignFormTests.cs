@@ -14,7 +14,7 @@ namespace GoHome.Tests;
 /// растёт вместе с масштабом, кнопки появляются по тому, что окно разрешает, и рисование
 /// не падает ни в одной теме.
 /// </remarks>
-[Collection(UiThemeCollection.Name)]
+[Collection(UiCollection.Name)]
 public sealed class DesignFormTests
 {
     /// <summary>Полоса заголовка ровно той высоты, которую просит дизайн.</summary>

@@ -8,6 +8,7 @@ namespace GoHome.Tests;
 /// Кольцо перерисовывается раз в минуту весь рабочий день. Здесь проверяется,
 /// что старый хендл иконки действительно освобождается: сборщик мусора его не тронет.
 /// </summary>
+[Collection(UiCollection.Name)]
 public class TrayRingHandleTests
 {
     private const uint GdiObjects = 0;

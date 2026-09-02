@@ -13,6 +13,7 @@ namespace GoHome.Tests;
 /// Графики вдобавок рисуются в картинку — деление на ноль в масштабе оси иначе
 /// обнаружится только у пользователя.
 /// </summary>
+[Collection(UiCollection.Name)]
 public sealed class FormsSmokeTests : IDisposable
 {
     private readonly string _root = Path.Combine(
