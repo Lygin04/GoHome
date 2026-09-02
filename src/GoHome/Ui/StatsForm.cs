@@ -411,8 +411,7 @@ internal sealed class StatsForm : DesignForm
             // Список получает столько, сколько занимают его строки, но не больше двух пятых
             // оставшегося: график без высоты перестаёт быть графиком, а подписи его оси
             // начинают налезать друг на друга.
-            var wanted = _days.PreferredHeight;
-            var listHeight = Math.Min(wanted, rest * 2 / 5);
+            var listHeight = _days.FittingHeight(Math.Min(_days.PreferredHeight, rest * 2 / 5));
             var chartHeight = rest - listHeight - gap;
 
             _chart.SetBounds(left, y, width, Math.Max(metrics.Scale(80), chartHeight));

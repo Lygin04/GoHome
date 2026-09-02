@@ -81,7 +81,10 @@ internal sealed class SettingsForm : DesignForm
 
         SetTitle("GoHome — настройки", "Настройки");
         MaximizeBox = false;
-        SetMinimum(new Size(620, 520));
+        // Шестьсот шестьдесят, а не пятьсот двадцать: самый высокий раздел — рабочая
+        // неделя, семь строк, — и при меньшей высоте воскресенье уезжало под кнопки.
+        // Минимум окна задаётся содержимым, а не догадкой.
+        SetMinimum(new Size(620, 660));
         SetInitialSize(new Size(880, 640));
 
         _nav = new Nav(Names);

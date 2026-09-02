@@ -82,6 +82,42 @@ public sealed class DesignTokensTests
         // Обе палитры непригодны в этом режиме целиком: тему выбрал человек.
         Assert.NotEqual(Palette.Dark.Window, SystemColors.Window);
         Assert.NotEqual(Palette.Light.Ink, SystemColors.WindowText);
+
+        var contrast = Palette.HighContrast();
+
+        Assert.Equal(SystemColors.Window, contrast.Window);
+        Assert.Equal(SystemColors.WindowText, contrast.Ink);
+        Assert.Equal(SystemColors.Highlight, contrast.Accent);
+        Assert.Equal(SystemColors.GrayText, contrast.Faint);
+    }
+
+    /// <summary>
+    /// В палитре высокой контрастности заполнено всё.
+    /// </summary>
+    /// <remarks>
+    /// Незаполненная роль здесь означает прозрачный или чёрный цвет посреди окна, и увидит
+    /// это первым тот, кому этот режим и нужен. Проверяется каждое свойство разом,
+    /// а не выборочно: забыть одно при добавлении новой роли слишком легко.
+    /// </remarks>
+    [Fact]
+    public void HighContrastLeavesNothingUnset()
+    {
+        var contrast = Palette.HighContrast();
+
+        foreach (var property in typeof(Palette).GetProperties())
+        {
+            var value = property.GetValue(contrast);
+
+            if (value is Color colour)
+            {
+                Assert.True(colour.A != 0, $"роль «{property.Name}» осталась прозрачной");
+            }
+
+            Assert.NotNull(value);
+        }
+
+        Assert.Equal(4, contrast.Heat.Count);
+        Assert.All(contrast.Heat, colour => Assert.NotEqual(0, (int)colour.A));
     }
 
     /// <summary>Смешивание доходит до концов и ничего не теряет по дороге.</summary>

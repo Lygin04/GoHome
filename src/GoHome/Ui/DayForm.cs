@@ -573,7 +573,7 @@ internal sealed class DayForm : DesignForm
 
         if (_list.Visible)
         {
-            _list.SetBounds(left, y, main, Math.Max(0, bottom - y));
+            _list.SetBounds(left, y, main, _list.FittingHeight(Math.Max(0, bottom - y)));
         }
 
         if (wide)

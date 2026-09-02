@@ -103,6 +103,20 @@ internal abstract class DesignList : DesignControl
     /// <summary>Весь список помещается целиком, прокручивать нечего.</summary>
     protected bool FitsWhole => _count * RowHeight <= Math.Max(0, Height - HeaderHeight);
 
+    /// <summary>
+    /// Высота, при которой в списке не будет половины строки.
+    /// </summary>
+    /// <remarks>
+    /// Обрезанная снизу строка честна, когда за ней что-то есть: она и говорит, что список
+    /// прокручивается. Но если весь список помещается, половина строки — это просто
+    /// недоделанный вид.
+    /// </remarks>
+    public int FittingHeight(int available)
+    {
+        var rows = Math.Max(0, available - HeaderHeight) / RowHeight;
+        return HeaderHeight + (Math.Min(_count, rows) * RowHeight);
+    }
+
     /// <summary>Цвет обычного текста строки: на выделенной он другой.</summary>
     protected static Color RowInk(Palette palette, RowState state) =>
         state.Selected ? palette.SelectionInk : palette.Ink;

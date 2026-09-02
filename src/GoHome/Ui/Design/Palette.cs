@@ -411,7 +411,11 @@ internal sealed class Palette
     /// подбирать под неё оттенки бессмысленно. Это третья палитра, а не испорченная одна
     /// из двух: системные цвета между собой уже согласованы.
     /// </summary>
-    private static Palette HighContrast()
+    /// <remarks>
+    /// Строится каждый раз заново: режим переключается горячими клавишами в любой момент,
+    /// и системные цвета вместе с ним.
+    /// </remarks>
+    public static Palette HighContrast()
     {
         var window = SystemColors.Window;
         var text = SystemColors.WindowText;
