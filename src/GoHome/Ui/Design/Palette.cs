@@ -115,6 +115,16 @@ internal sealed class Palette
     /// <summary>Опасная кнопка: в покое ни подложки, ни рамки.</summary>
     public required ButtonStyle DangerButton { get; init; }
 
+    /// <summary>
+    /// Залитая красным кнопка подтверждения.
+    /// </summary>
+    /// <remarks>
+    /// Красный один на обе темы — тот же, которым Windows подсвечивает закрытие окна.
+    /// Подбирать под тему оттенок необратимого действия незачем: он должен читаться
+    /// одинаково тревожно и там и там.
+    /// </remarks>
+    public required ButtonStyle DangerFilledButton { get; init; }
+
     /// <summary>Поле ввода.</summary>
     public required FieldStyle TextField { get; init; }
 
@@ -229,6 +239,12 @@ internal sealed class Palette
             Pressed: new Face(Rgb(0x2A1E1E), Rgb(0xE06C60), Rgb(0xE9857A)),
             Disabled: new Face(Color.Transparent, Color.Transparent, Rgb(0x4A3330))),
 
+        DangerFilledButton = new ButtonStyle(
+            Rest: new Face(Rgb(0xC4362C), Rgb(0xC4362C), Rgb(0xFFFFFF)),
+            Hover: new Face(Rgb(0xD44A3F), Rgb(0xD44A3F), Rgb(0xFFFFFF)),
+            Pressed: new Face(Rgb(0xA82C24), Rgb(0xA82C24), Rgb(0xFFFFFF)),
+            Disabled: new Face(Rgb(0x3A2A2A), Rgb(0x3A2A2A), Rgb(0x5D6673))),
+
         TextField = new FieldStyle(
             Rest: new Face(Rgb(0x232830), Rgb(0x2C323C), Rgb(0xE6EAF0)),
             Focus: new Face(Rgb(0x232830), Rgb(0x60A5FA), Rgb(0xE6EAF0)),
@@ -307,6 +323,12 @@ internal sealed class Palette
             Hover: new Face(Rgb(0xE8EBEF), Color.Transparent, Rgb(0xC0392F)),
             Pressed: new Face(Rgb(0xF7E3E1), Rgb(0xC0392F), Rgb(0xA62F26)),
             Disabled: new Face(Color.Transparent, Color.Transparent, Rgb(0xE3BFBB))),
+
+        DangerFilledButton = new ButtonStyle(
+            Rest: new Face(Rgb(0xC0392F), Rgb(0xC0392F), Rgb(0xFFFFFF)),
+            Hover: new Face(Rgb(0xA82C24), Rgb(0xA82C24), Rgb(0xFFFFFF)),
+            Pressed: new Face(Rgb(0x8F231C), Rgb(0x8F231C), Rgb(0xFFFFFF)),
+            Disabled: new Face(Rgb(0xE3BFBB), Rgb(0xE3BFBB), Rgb(0xFFFFFF))),
 
         TextField = new FieldStyle(
             Rest: new Face(Rgb(0xF5F7F9), Rgb(0xDDE1E7), Rgb(0x171A1F)),
@@ -434,6 +456,7 @@ internal sealed class Palette
             NeutralButton = new ButtonStyle(normal, active, active, off),
             PrimaryButton = new ButtonStyle(active, normal, normal, off),
             DangerButton = new ButtonStyle(normal, active, active, off),
+            DangerFilledButton = new ButtonStyle(active, normal, normal, off),
 
             TextField = new FieldStyle(
                 Rest: new Face(window, controlText, text),

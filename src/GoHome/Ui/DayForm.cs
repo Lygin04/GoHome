@@ -36,9 +36,21 @@ internal sealed class DayForm : DesignForm
     private readonly Notice _notice;
     private readonly DesignButton _reveal;
 
+    private readonly DesignButton _toggle;
+    private readonly DesignButton _edit;
+    private readonly DesignButton _delete;
+    private readonly BreakEditor _editor;
+    private readonly Confirmation _confirm;
+
+    private readonly FileSystemWatcher _watcher;
+    private readonly System.Windows.Forms.Timer _settle;
+
     private DateOnly _date;
     private DayPage? _page;
     private DayBand? _band;
+
+    /// <summary>Как отменить последнюю правку. Удаление сюда не попадает — его не вернуть.</summary>
+    private Action? _undo;
 
     public DayForm(GoHomeService service, Func<DateTimeOffset> clock)
     {
@@ -78,6 +90,24 @@ internal sealed class DayForm : DesignForm
         _reveal = new DesignButton { Text = "Показать файл дня" };
         _reveal.Click += (_, _) => Reveal();
 
+        _toggle = new DesignButton { Kind = ButtonKind.Primary, Text = "Засчитать как работу" };
+        _toggle.Click += (_, _) => ToggleSelected();
+
+        _edit = new DesignButton { Text = "Изменить время" };
+        _edit.Click += (_, _) => OpenEditor();
+
+        _delete = new DesignButton { Kind = ButtonKind.Danger, Text = "Удалить" };
+        _delete.Click += (_, _) => AskToDelete();
+
+        _editor = new BreakEditor { Visible = false };
+        _editor.Edited += (_, _) => Revalidate();
+        _editor.Accepted += (_, _) => SaveEditor();
+        _editor.Cancelled += (_, _) => CloseSlot();
+
+        _confirm = new Confirmation { Visible = false };
+        _confirm.Accepted += (_, _) => DeleteSelected();
+        _confirm.Cancelled += (_, _) => CloseSlot();
+
         Content.Controls.AddRange(
         [
             _previous,
@@ -89,8 +119,24 @@ internal sealed class DayForm : DesignForm
             _list,
             _numbers,
             _notice,
+            _editor,
+            _confirm,
+            _toggle,
+            _edit,
+            _delete,
             _reveal,
         ]);
+
+        // Служба пишет в тот же файл, пока окно открыто. Держать прочитанное и записывать
+        // поверх нельзя — значит, надо замечать чужую запись и перечитывать.
+        _settle = new System.Windows.Forms.Timer { Interval = 250 };
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            Reload();
+        };
+
+        _watcher = Watch();
 
         Reload();
     }
@@ -109,6 +155,10 @@ internal sealed class DayForm : DesignForm
         var page = _service.OpenDay(_date, now);
         var band = DayBand.For(page.Summary, now, TickStep);
 
+        // Выбор держится за время, а не за номер строки: после правки строк может стать
+        // меньше, и номер указал бы на чужой отрезок.
+        var keep = _list.SelectedSegment?.Start;
+
         _page = page;
         _band = band;
 
@@ -120,7 +170,8 @@ internal sealed class DayForm : DesignForm
         _timeline.Show(band);
         _legend.Show(band);
         _numbersBody.Show(page.Summary);
-        _list.Show(band, page.Summary);
+        _list.Show(band, page.Summary, page.Edited);
+        _list.SelectBreakAt(keep);
 
         // Повреждённый файл не притворяется пустым днём: показывать в нём нечего,
         // и предлагать правку того, что не прочиталось, тем более нельзя.
@@ -141,6 +192,12 @@ internal sealed class DayForm : DesignForm
         // Вперёд дальше сегодняшнего дня ходить некуда: того дня ещё не было.
         _next.Enabled = _date < WorkDay.DateOf(now);
 
+        // Открытая правка переживает чужую запись в файл, если правимый перерыв на месте.
+        if (_editor.Visible && _list.SelectedBreak is null)
+        {
+            CloseSlot();
+        }
+
         ShowSelection();
         Relayout();
     }
@@ -150,6 +207,21 @@ internal sealed class DayForm : DesignForm
     {
         base.OnActivated(e);
         Reload();
+    }
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            // Наблюдатель держит хендл каталога и поток пула. Закрытое окно не должно
+            // ни того ни другого.
+            _watcher.EnableRaisingEvents = false;
+            _watcher.Dispose();
+            _settle.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     /// <inheritdoc/>
@@ -174,6 +246,14 @@ internal sealed class DayForm : DesignForm
 
             case Keys.Control | Keys.Right when _next.Enabled:
                 Step(1);
+                return true;
+
+            case Keys.Control | Keys.Z when _undo is not null:
+                var undo = _undo;
+                _undo = null;
+                undo();
+                CloseSlot();
+                Reload();
                 return true;
         }
 
@@ -204,6 +284,186 @@ internal sealed class DayForm : DesignForm
     {
         _timeline.Selected = _list.SelectedSegment?.Start;
         _timeline.Invalidate();
+
+        // Править можно отлучку, но не работу: работа — это то, что осталось между
+        // отлучками, и своих отметок в журнале у неё нет.
+        var interval = _list.SelectedBreak;
+        var editable = interval is not null && !(_page?.Unreadable ?? false);
+
+        _toggle.Enabled = editable;
+        _edit.Enabled = editable;
+        _delete.Enabled = editable;
+
+        // Без выбора кнопка носит своё обычное имя, а не имя обратного действия.
+        _toggle.Text = interval is null || interval.IsUnpaid ? "Засчитать как работу" : "Не засчитывать";
+
+        Relayout();
+    }
+
+    /// <summary>Меняет зачёт выбранной отлучки. Ручная правка сильнее догадки.</summary>
+    private void ToggleSelected()
+    {
+        if (_list.SelectedBreak is not { } interval)
+        {
+            return;
+        }
+
+        var kind = interval.IsUnpaid ? BreakKind.Paid : BreakKind.Unpaid;
+        var back = interval.IsUnpaid ? BreakKind.Unpaid : BreakKind.Paid;
+        var at = interval.Start;
+        var date = _date;
+
+        if (_service.Reclassify(date, at, kind, "day-form"))
+        {
+            _undo = () => _service.Reclassify(date, at, back, "day-form");
+            CloseSlot();
+            Reload();
+        }
+    }
+
+    private void OpenEditor()
+    {
+        if (_list.SelectedBreak is not { } interval)
+        {
+            return;
+        }
+
+        _confirm.Visible = false;
+        _editor.Visible = true;
+        _editor.Open(interval.Start, interval.End);
+        Relayout();
+        _editor.FocusStart();
+        Revalidate();
+    }
+
+    /// <summary>Спрашивает у тех же правил, годится ли набранное, — до попытки сохранить.</summary>
+    private void Revalidate()
+    {
+        if (_list.SelectedBreak is not { } interval || _editor.Value is not { } value)
+        {
+            _editor.Refuse(_editor.Value is null ? "Время набрано не полностью." : null);
+            return;
+        }
+
+        var (start, end) = Rebase(interval, value);
+        _editor.Refuse(_service.CheckBreak(_date, interval.Start, start, end));
+    }
+
+    private void SaveEditor()
+    {
+        if (_list.SelectedBreak is not { } interval || _editor.Value is not { } value)
+        {
+            return;
+        }
+
+        var (start, end) = Rebase(interval, value);
+        var refusal = _service.MoveBreak(_date, interval.Start, start, end);
+
+        if (refusal is not null)
+        {
+            _editor.Refuse(refusal);
+            return;
+        }
+
+        // Отмена возвращает прежние границы той же правкой, а не записью старой копии:
+        // журнал перечитывается под замком, и чужая запись при этом не теряется.
+        var date = _date;
+        var wasStart = interval.Start;
+        var wasEnd = interval.End;
+        _undo = () => _service.MoveBreak(date, start, wasStart, wasEnd);
+
+        CloseSlot();
+        _list.SelectBreakAt(start);
+        Reload();
+    }
+
+    private void AskToDelete()
+    {
+        if (_list.SelectedBreak is not { } interval)
+        {
+            return;
+        }
+
+        _editor.Visible = false;
+        _confirm.Visible = true;
+        _confirm.Ask(
+            "Удалить перерыв " + WorkTimeFormat.Clock(interval.Start) + "–" + WorkTimeFormat.Clock(interval.End)
+                + "? Время до и после него сомкнётся в работу. Отменить это нельзя.");
+
+        Relayout();
+    }
+
+    private void DeleteSelected()
+    {
+        if (_list.SelectedBreak is { } interval && _service.RemoveBreak(_date, interval.Start))
+        {
+            // Удаление не отменяется: вернуть отметки, которых больше нет, нечем.
+            // Поэтому оно и спрашивает подтверждение, а отмена при этом очищается.
+            _undo = null;
+            _list.SelectedIndex = -1;
+        }
+
+        CloseSlot();
+        Reload();
+    }
+
+    private void CloseSlot()
+    {
+        _editor.Visible = false;
+        _confirm.Visible = false;
+        Relayout();
+    }
+
+    /// <summary>Собирает границы дня из набранного времени, оставляя дату прежней.</summary>
+    private static (DateTimeOffset Start, DateTimeOffset End) Rebase(
+        BreakInterval interval,
+        (TimeOnly Start, TimeOnly End) value)
+    {
+        var start = Shift(interval.Start, value.Start);
+        var end = Shift(interval.End, value.End);
+
+        // Конец, оказавшийся раньше начала по часам, относится к следующим календарным
+        // суткам: рабочий день сдвинут, и вечерний перерыв через полночь — обычное дело.
+        if (end <= start)
+        {
+            end = end.AddDays(1);
+        }
+
+        return (start, end);
+
+        static DateTimeOffset Shift(DateTimeOffset at, TimeOnly time) =>
+            new(at.Date.Add(time.ToTimeSpan()), at.Offset);
+    }
+
+    /// <summary>Следит за чужой записью в файл дня.</summary>
+    private FileSystemWatcher Watch()
+    {
+        var watcher = new FileSystemWatcher(_service.DataRoot, "*.json")
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            EnableRaisingEvents = true,
+        };
+
+        // Событий на одну запись приходит несколько, и приходят они с чужого потока.
+        // Таймер сводит их в одно перечитывание на UI-потоке.
+        void Touched(object? sender, FileSystemEventArgs e)
+        {
+            if (IsHandleCreated && !IsDisposed)
+            {
+                BeginInvoke(() =>
+                {
+                    _settle.Stop();
+                    _settle.Start();
+                });
+            }
+        }
+
+        watcher.Changed += Touched;
+        watcher.Created += Touched;
+        watcher.Deleted += Touched;
+        watcher.Renamed += (_, e) => Touched(null, e);
+
+        return watcher;
     }
 
     private void Relayout()
@@ -257,10 +517,39 @@ internal sealed class DayForm : DesignForm
         var bottom = Content.ClientSize.Height - pad;
         _reveal.FitToText();
         _reveal.Location = new Point(left, bottom - _reveal.Height);
+        bottom -= _reveal.Height + metrics.Space(4);
+
+        // Панель действий и слот правки растут снизу вверх: список отдаёт им место,
+        // а не наоборот — иначе открытая правка выталкивала бы кнопки за край окна.
+        foreach (var button in new[] { _toggle, _edit, _delete })
+        {
+            button.Visible = _list.Visible;
+            button.FitToText();
+        }
 
         if (_list.Visible)
         {
-            _list.SetBounds(left, y, main, Math.Max(0, bottom - _reveal.Height - gap - y));
+            var buttonLeft = left;
+            foreach (var button in new[] { _toggle, _edit, _delete })
+            {
+                button.Location = new Point(buttonLeft, bottom - button.Height);
+                buttonLeft += button.Width + gap;
+            }
+
+            bottom -= _toggle.Height + gap;
+        }
+
+        var slot = _editor.Visible ? _editor : _confirm.Visible ? (Control)_confirm : null;
+        if (slot is not null)
+        {
+            var height = slot == _editor ? _editor.PreferredHeight : _confirm.PreferredHeight(main);
+            slot.SetBounds(left, bottom - height, main, height);
+            bottom -= height + gap;
+        }
+
+        if (_list.Visible)
+        {
+            _list.SetBounds(left, y, main, Math.Max(0, bottom - y));
         }
 
         if (wide)
@@ -619,19 +908,41 @@ internal sealed class DayForm : DesignForm
         private readonly List<BandSegment> _segments = [];
         private DaySummary? _day;
         private DateTimeOffset? _openEnd;
+        private IReadOnlySet<DateTimeOffset> _edited = new HashSet<DateTimeOffset>();
 
         /// <summary>Выбранный отрезок. Работу править нечем, отлучку — есть чем.</summary>
         public BandSegment? SelectedSegment =>
             SelectedIndex >= 0 && SelectedIndex < _segments.Count ? _segments[SelectedIndex] : null;
 
-        public void Show(DayBand band, DaySummary day)
+        /// <summary>Выбранная отлучка. У работы своих отметок в журнале нет.</summary>
+        public BreakInterval? SelectedBreak =>
+            SelectedSegment is { Kind: not BandKind.Work } segment ? Interval(segment) : null;
+
+        /// <summary>Возвращает выбор на отлучку с таким началом — после перечитывания дня.</summary>
+        public void SelectBreakAt(DateTimeOffset? start)
+        {
+            if (start is not { } at)
+            {
+                return;
+            }
+
+            var index = _segments.FindIndex(segment => segment.Start == at);
+            if (index >= 0)
+            {
+                SelectedIndex = index;
+            }
+        }
+
+        public void Show(DayBand band, DaySummary day, IReadOnlySet<DateTimeOffset> edited)
         {
             ArgumentNullException.ThrowIfNull(band);
             ArgumentNullException.ThrowIfNull(day);
+            ArgumentNullException.ThrowIfNull(edited);
 
             _segments.Clear();
             _segments.AddRange(band.Segments);
             _day = day;
+            _edited = edited;
 
             // У идущего дня последний отрезок не кончился: подписывать его временем конца
             // было бы обещанием, что человек уже ушёл.
@@ -749,7 +1060,9 @@ internal sealed class DayForm : DesignForm
                 return null;
             }
 
-            if (IsManual(segment))
+            // «Правлено вручную» — про две разные вещи сразу: сдвинутые отметки журнала
+            // и снятую вручную пометку зачёта. Обе означают одно: это решил человек.
+            if (_edited.Contains(segment.Start) || IsManual(segment))
             {
                 return ("правлено вручную", true);
             }
@@ -798,6 +1111,124 @@ internal sealed class DayForm : DesignForm
 
     private static string Capitalize(string text) =>
         text.Length == 0 ? text : char.ToUpper(text[0], Russian) + text[1..];
+
+    /// <summary>
+    /// Подтверждение удаления.
+    /// </summary>
+    /// <remarks>
+    /// Внутри окна, а не системным диалогом: системное окно посреди целиком нарисованного
+    /// приложения читается как чужое. Дизайн (1h) показывает подтверждение ровно так же —
+    /// карточкой с красной рамкой на месте содержимого.
+    /// </remarks>
+    private sealed class Confirmation : Panel, IPaletteAware
+    {
+        private readonly DesignButton _yes;
+        private readonly DesignButton _no;
+
+        private string _question = string.Empty;
+
+        public Confirmation()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                    | ControlStyles.UserPaint
+                    | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.ResizeRedraw,
+                true);
+
+            _yes = new DesignButton { Kind = ButtonKind.DangerFilled, Text = "Удалить" };
+            _yes.Click += (_, _) => Accepted?.Invoke(this, EventArgs.Empty);
+
+            _no = new DesignButton { Text = "Отмена" };
+            _no.Click += (_, _) => Cancelled?.Invoke(this, EventArgs.Empty);
+
+            Controls.AddRange([_yes, _no]);
+        }
+
+        public event EventHandler? Accepted;
+
+        public event EventHandler? Cancelled;
+
+        public void Ask(string question)
+        {
+            _question = question;
+            PerformLayout();
+            Invalidate();
+            _no.Focus();
+        }
+
+        public int PreferredHeight(int width)
+        {
+            var metrics = Metrics.Of(this);
+            var fonts = Typography.Of(metrics);
+            var inset = metrics.Space(4);
+
+            var text = TextRenderer.MeasureText(
+                _question,
+                fonts.Body,
+                new Size(Math.Max(1, width - (inset * 2)), 0),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+
+            return inset + text.Height + metrics.Space(3) + metrics.ControlHeight + inset;
+        }
+
+        public void RefreshPalette()
+        {
+            BackColor = Palette.Current().Card;
+            Invalidate(invalidateChildren: true);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            RefreshPalette();
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+
+            var metrics = Metrics.Of(this);
+            var inset = metrics.Space(4);
+
+            _yes.FitToText();
+            _no.FitToText();
+
+            var top = Height - inset - metrics.ControlHeight;
+            _yes.Location = new Point(inset, top);
+            _no.Location = new Point(_yes.Right + metrics.Space(2), top);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            ArgumentNullException.ThrowIfNull(e);
+
+            var palette = Palette.Current();
+            var metrics = Metrics.Of(this);
+            var fonts = Typography.Of(metrics);
+
+            using (var back = new SolidBrush(Parent?.BackColor ?? palette.Window))
+            {
+                e.Graphics.FillRectangle(back, ClientRectangle);
+            }
+
+            Draw.Surface(
+                e.Graphics,
+                new Rectangle(0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1)),
+                new Face(palette.Card, palette.Danger, palette.Ink),
+                metrics.RadiusCard,
+                Draw.LineWidth(metrics));
+
+            var inset = metrics.Space(4);
+            TextRenderer.DrawText(
+                e.Graphics,
+                _question,
+                fonts.Body,
+                new Rectangle(inset, inset, Math.Max(0, Width - (inset * 2)), Math.Max(0, Height - (inset * 2))),
+                palette.Ink,
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+        }
+    }
 
     /// <summary>Полотно, которое рисует себя само и берёт фон у родителя.</summary>
     private abstract class DrawnPanel : Control

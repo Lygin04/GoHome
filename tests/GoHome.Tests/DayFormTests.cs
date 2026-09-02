@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GoHome.App;
 using GoHome.Core;
 using GoHome.Ui;
@@ -186,6 +187,123 @@ public sealed class DayFormTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// Править предлагается только там, где есть что править: у работы своих отметок
+    /// в журнале нет, она — то, что осталось между отлучками.
+    /// </summary>
+    [Fact]
+    public void ActionsWakeUpOnlyOnABreak()
+    {
+        Run(service =>
+        {
+            service.RecordReturn(At(9), "unlock");
+            service.RecordPause(At(13), TimeSpan.Zero, "lock");
+            service.RecordReturn(At(13, 45), "unlock");
+
+            using var form = Open(service, At(17));
+            form.Size = new Size(1180, 620);
+
+            var list = Find<DesignList>(form).First();
+            var edit = Button(form, "Изменить время");
+
+            ClickRow(list, 0);
+            Assert.False(edit.Enabled);
+
+            ClickRow(list, 1);
+            Assert.True(edit.Enabled);
+        });
+    }
+
+    /// <summary>Правка открывается на границах выбранной отлучки.</summary>
+    [Fact]
+    public void EditorOpensOnTheSelectedBreak()
+    {
+        Run(service =>
+        {
+            service.RecordReturn(At(9), "unlock");
+            service.RecordPause(At(13), TimeSpan.Zero, "lock");
+            service.RecordReturn(At(13, 45), "unlock");
+
+            using var form = Open(service, At(17));
+            form.Size = new Size(1180, 620);
+
+            ClickRow(Find<DesignList>(form).First(), 1);
+            Click(Button(form, "Изменить время"));
+
+            var editor = Assert.Single(Find<BreakEditor>(form));
+            Assert.True(editor.Visible);
+            Assert.Equal((new TimeOnly(13, 0), new TimeOnly(13, 45)), editor.Value);
+        });
+    }
+
+    /// <summary>Удаление спрашивает подтверждение, а не убирает перерыв по щелчку.</summary>
+    [Fact]
+    public void DeleteAsksFirst()
+    {
+        Run(service =>
+        {
+            service.RecordReturn(At(9), "unlock");
+            service.RecordPause(At(13), TimeSpan.Zero, "lock");
+            service.RecordReturn(At(13, 45), "unlock");
+
+            using var form = Open(service, At(17));
+            form.Size = new Size(1180, 620);
+
+            ClickRow(Find<DesignList>(form).First(), 1);
+            Click(Button(form, "Удалить"));
+
+            // Перерыв на месте: спросили, но не сделали.
+            Assert.Single(service.OpenDay(Today, At(17)).Summary.Intervals);
+
+            // И подтверждение показано — с той же надписью и своей кнопкой отмены.
+            Assert.Contains(Find<DesignButton>(form), button => button.Text == "Отмена" && button.Visible);
+        });
+    }
+
+    // ---- щелчки теми же сообщениями, что шлёт система --------------------------------
+
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
+
+    [DllImport("user32.dll")]
+    private static extern nint SendMessageW(nint hWnd, int msg, nint wParam, nint lParam);
+
+    private static DesignButton Button(Control root, string text) =>
+        Find<DesignButton>(root).First(button => button.Text == text);
+
+    private static IEnumerable<T> Find<T>(Control root)
+        where T : Control
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child is T found)
+            {
+                yield return found;
+            }
+
+            foreach (var deeper in Find<T>(child))
+            {
+                yield return deeper;
+            }
+        }
+    }
+
+    private static void ClickRow(DesignList list, int index)
+    {
+        var row = Metrics.Of(list).RowHeight;
+        Click(list, list.Width / 2, (row * index) + (row / 2));
+    }
+
+    private static void Click(Control control) =>
+        Click(control, control.Width / 2, control.Height / 2);
+
+    private static void Click(Control control, int x, int y)
+    {
+        var at = (y << 16) | (x & 0xFFFF);
+        SendMessageW(control.Handle, WmLButtonDown, 1, at);
+        SendMessageW(control.Handle, WmLButtonUp, 0, at);
+    }
+
     private static DayForm Open(GoHomeService service, DateTimeOffset now)
     {
         var form = new DayForm(service, () => now)
@@ -195,7 +313,10 @@ public sealed class DayFormTests : IDisposable
             ShowInTaskbar = false,
         };
 
-        _ = form.Handle;
+        // За пределами экрана, но по-настоящему показано: без этого раскладки нет,
+        // контролы нулевого размера, и щелчок не попадает никуда.
+        form.Show();
+        Application.DoEvents();
         return form;
     }
 

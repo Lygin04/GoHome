@@ -13,6 +13,16 @@ internal enum ButtonKind
 
     /// <summary>Опасная: в покое ни подложки, ни рамки — только красный текст.</summary>
     Danger,
+
+    /// <summary>
+    /// Опасная и основная сразу: залитая красным.
+    /// </summary>
+    /// <remarks>
+    /// Для подтверждения, где необратимое действие — это и есть главная кнопка. В остальных
+    /// местах опасное действие остаётся тихим: залитый красный на каждой строке списка
+    /// перестал бы означать «подумай».
+    /// </remarks>
+    DangerFilled,
 }
 
 /// <summary>
@@ -77,6 +87,7 @@ internal sealed class DesignButton : DesignControl
         {
             ButtonKind.Primary => palette.PrimaryButton,
             ButtonKind.Danger => palette.DangerButton,
+            ButtonKind.DangerFilled => palette.DangerFilledButton,
             _ => palette.NeutralButton,
         };
 
