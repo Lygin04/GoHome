@@ -18,6 +18,7 @@ namespace GoHome.Tests;
 /// пустая ссылка на цвет или нулевой размер видны только на отрисовке.
 /// </para>
 /// </remarks>
+[Collection(UiThemeCollection.Name)]
 public sealed class PrimitivesTests
 {
     private const int WmKeyDown = 0x0100;

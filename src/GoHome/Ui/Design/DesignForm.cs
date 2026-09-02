@@ -31,7 +31,7 @@ namespace GoHome.Ui.Design;
 /// строка содержимого прячется под ней.
 /// </para>
 /// </remarks>
-internal class DesignForm : Form
+internal class DesignForm : Form, IPaletteAware
 {
     private readonly CaptionBar _caption = new();
     private readonly Surface _content = new();
@@ -105,6 +105,7 @@ internal class DesignForm : Form
         _content.BackColor = palette.Window;
         Invalidate(invalidateChildren: true);
     }
+
 
     /// <inheritdoc/>
     protected override void OnHandleCreated(EventArgs e)

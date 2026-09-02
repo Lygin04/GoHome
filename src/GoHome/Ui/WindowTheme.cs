@@ -1,4 +1,5 @@
 using GoHome.Core;
+using GoHome.Ui.Design;
 
 namespace GoHome.Ui;
 
@@ -31,15 +32,38 @@ internal static class WindowTheme
         Refresh();
     }
 
-    /// <summary>Перекрашивает открытые окна под текущую тему.</summary>
+    /// <summary>
+    /// Перекрашивает открытые окна под текущую тему.
+    /// </summary>
+    /// <remarks>
+    /// Одной перерисовки мало. Нарисованные контролы спрашивают цвет у
+    /// <see cref="Palette.Current"/> прямо на отрисовке и обновляются сами, но фон элемент
+    /// берёт у родителя через <see cref="Control.BackColor"/> — а окно и карточка рисуют
+    /// себя не им. Без обхода дерева окно осталось бы в старом фоне с содержимым в новом.
+    /// </remarks>
     public static void Refresh()
     {
         foreach (Form form in Application.OpenForms)
         {
             if (!form.IsDisposed && form.IsHandleCreated)
             {
+                Restate(form);
                 form.Invalidate(invalidateChildren: true);
             }
+        }
+    }
+
+    /// <summary>Обходит дерево и даёт перечитать палитру тем, кому перерисовки мало.</summary>
+    private static void Restate(Control control)
+    {
+        if (control is IPaletteAware aware)
+        {
+            aware.RefreshPalette();
+        }
+
+        foreach (Control child in control.Controls)
+        {
+            Restate(child);
         }
     }
 }

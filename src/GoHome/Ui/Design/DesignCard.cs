@@ -15,7 +15,7 @@ namespace GoHome.Ui.Design;
 /// это дёшево.
 /// </para>
 /// </remarks>
-internal sealed class DesignCard : Panel
+internal sealed class DesignCard : Panel, IPaletteAware
 {
     private const int Inset = 16;
 
@@ -82,6 +82,21 @@ internal sealed class DesignCard : Panel
         }
     }
 
+    /// <summary>
+    /// Перечитывает палитру.
+    /// </summary>
+    /// <remarks>
+    /// Карточка рисует себя цветом <see cref="Palette.Card"/>, а дети берут фон из её
+    /// <see cref="Control.BackColor"/>. Без обновления кнопка внутри карточки затирала бы
+    /// свой угол цветом окна.
+    /// </remarks>
+    public void RefreshPalette()
+    {
+        var palette = Palette.Current();
+        BackColor = Bare ? (Parent?.BackColor ?? palette.Window) : palette.Card;
+        Invalidate(invalidateChildren: true);
+    }
+
     /// <summary>Где начинается содержимое — под заголовком и отступами.</summary>
     public Rectangle ContentBounds
     {
@@ -97,6 +112,13 @@ internal sealed class DesignCard : Panel
                 Math.Max(inset, Width - inset),
                 Math.Max(top, Height - inset));
         }
+    }
+
+    /// <inheritdoc/>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        RefreshPalette();
     }
 
     /// <inheritdoc/>
