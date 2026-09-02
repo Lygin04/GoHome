@@ -112,11 +112,18 @@ public sealed class GoHomeService
         });
     }
 
-    /// <summary>Путь к файлу дня, которому принадлежит момент.</summary>
-    public string DayFilePath(DateTimeOffset now) => _store.PathFor(WorkDay.DateOf(now));
-
-    /// <summary>Есть ли файл журнала за этот день.</summary>
-    public bool DayFileExists(DateTimeOffset now) => File.Exists(DayFilePath(now));
+    /// <summary>
+    /// Один день целиком: расчёт, состояние файла и путь к нему.
+    /// </summary>
+    /// <remarks>
+    /// Только читает — от разглядывания день не меняется. Файл читается один раз: спросить
+    /// расчёт и «разобрался ли файл» по отдельности значило бы прочитать его дважды.
+    /// </remarks>
+    public DayPage OpenDay(DateOnly date, DateTimeOffset now)
+    {
+        var log = _store.Load(date);
+        return new DayPage(Compute(log, now), log.IsUnreadable, _store.PathFor(date));
+    }
 
     /// <summary>Сводка за последние дни, свежие сверху.</summary>
     public IReadOnlyList<DaySummary> History(DateTimeOffset now, int days)
